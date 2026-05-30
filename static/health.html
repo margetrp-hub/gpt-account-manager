@@ -4,8 +4,8 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>GPT账号管理助手 - 部署自检</title>
-  <link rel="stylesheet" href="/styles.css?v=20260531-cpa-diagnosis">
-  <link rel="stylesheet" href="/forge-theme.css?v=20260531-cpa-diagnosis">
+  <link rel="stylesheet" href="/styles.css?v=20260531-open-source-links">
+  <link rel="stylesheet" href="/forge-theme.css?v=20260531-open-source-links">
 </head>
 <body>
   <div class="shell">
@@ -21,7 +21,6 @@
         <a href="/">账号管理</a>
         <a href="/refresh.html">凭证刷新</a>
         <a href="/warehouse.html">CPA 仓管</a>
-        <a href="/public-pool" target="_blank" rel="noreferrer">公益站</a>
       </nav>
     </header>
 
@@ -119,7 +118,7 @@
       els.features.innerHTML = kv([
         ["临时邮箱 API", payload.urls?.temp_worker],
         ["取信网络", network.ok ? "正常" : "DNS/网络异常"],
-        ["公益站", payload.urls?.public_pool],
+        ["公共池地址", payload.urls?.public_pool],
         ["公益池 API", payload.features?.public_pool_api ? "已配置" : "未配置"],
         ["CPA 内网远程", payload.features?.cpa_private_remote_allowed ? "允许" : "关闭"],
         ["刷新链路", "协议登录"],

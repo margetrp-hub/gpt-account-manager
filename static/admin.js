@@ -9,7 +9,6 @@ const els = {
   pushPoolBtn: document.querySelector("#pushPoolBtn"),
   clearAdminBtn: document.querySelector("#clearAdminBtn"),
   adminStatus: document.querySelector("#adminStatus"),
-  publicPoolLink: document.querySelector("#publicPoolLink"),
   poolApiUrl: document.querySelector("#poolApiUrl"),
   poolToken: document.querySelector("#poolToken"),
   poolManualText: document.querySelector("#poolManualText"),
@@ -48,18 +47,6 @@ localStorage.setItem("ctgptm.admin.workerUrl", els.workerUrl.value);
 
 if (queryToken) {
   localStorage.setItem("ctgptm.admin.toolToken", queryToken);
-}
-
-async function loadPublicConfig() {
-  try {
-    const response = await fetch("/public-config", { cache: "no-store" });
-    const config = await readJsonResponse(response, "/public-config");
-    if (config.public_pool_url && els.publicPoolLink) {
-      els.publicPoolLink.href = config.public_pool_url;
-    }
-  } catch {
-    // Keep the local /public-pool fallback.
-  }
 }
 
 function toast(text) {
@@ -448,5 +435,4 @@ els.resultRows.addEventListener("click", (event) => {
   copyText(`${row.address || row.email}----${row.jwt}`);
 });
 
-loadPublicConfig();
 renderResults();

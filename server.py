@@ -70,7 +70,7 @@ TEMP_ADDRESSES_FILE = DATA_DIR / "temp_addresses.json"
 REFRESH_RESULTS_FILE = DATA_DIR / "refresh_results.json"
 LOGIN_HISTORY_FILE = DATA_DIR / "login_history.json"
 LOGIN_DEBUG_DIR = DATA_DIR / "login_debug"
-APP_VERSION = "20260531-cpa-diagnosis"
+APP_VERSION = "20260531-open-source-links"
 
 DEFAULT_HOST = os.environ.get("MAIL_PICKUP_HOST", "127.0.0.1")
 DEFAULT_PORT = int(os.environ.get("MAIL_PICKUP_PORT", "8765"))
