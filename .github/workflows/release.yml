@@ -22,22 +22,22 @@ jobs:
       - name: Create release notes
         run: |
           cat > release-notes.md <<'EOF'
-## GPT账号管理助手
+          ## GPT账号管理助手
 
-本次发布重点：
+          本次发布重点：
 
-- 新增并打磨独立邮箱管理页。
-- 导入类型只显示邮箱名称：自动识别、Outlook 邮箱、临时邮箱。
-- 权限类型显示为 JWT、微软 OAuth、微软 OAuth+密码。
-- 移除异常主分类，异常邮箱只在邮箱名旁标红“（错误）”。
-- 左侧邮箱管家区域改为浅色高对比，避免看不清。
+          - 新增并打磨独立邮箱管理页。
+          - 导入类型只显示邮箱名称：自动识别、Outlook 邮箱、临时邮箱。
+          - 权限类型显示为 JWT、微软 OAuth、微软 OAuth+密码。
+          - 移除异常主分类，异常邮箱只在邮箱名旁标红“（错误）”。
+          - 左侧邮箱管家区域改为浅色高对比，避免看不清。
 
-部署方式仍然推荐 Docker Compose：
+          部署方式仍然推荐 Docker Compose：
 
-```bash
-git pull --ff-only origin main
-docker compose up -d --build --force-recreate
-```
+          ```bash
+          git pull --ff-only origin main
+          docker compose up -d --build --force-recreate
+          ```
           EOF
 
       - name: Publish GitHub Release
