@@ -72,7 +72,7 @@ LOGIN_HISTORY_FILE = DATA_DIR / "login_history.json"
 LOGIN_DEBUG_DIR = DATA_DIR / "login_debug"
 UPGRADE_REQUEST_FILE = DATA_DIR / "upgrade_request.json"
 UPGRADE_RESULT_FILE = DATA_DIR / "upgrade_result.json"
-APP_VERSION = "20260601-queue-filter-cleanup"
+APP_VERSION = "20260601-mailbox-manager"
 
 DEFAULT_HOST = os.environ.get("MAIL_PICKUP_HOST", "127.0.0.1")
 DEFAULT_PORT = int(os.environ.get("MAIL_PICKUP_PORT", "8765"))
@@ -7834,6 +7834,51 @@ def import_pickup_accounts(payload: dict[str, Any], workspace_id: str = "public"
     }
 
 
+def import_temp_addresses(payload: dict[str, Any], workspace_id: str = "public") -> dict[str, Any]:
+    incoming, errors = parse_temp_address_lines(str(payload.get("text", "")))
+    addresses_path = workspace_file(workspace_id, "temp_addresses.json")
+    addresses = load_temp_addresses(addresses_path)
+    imported = 0
+    updated = 0
+    skipped = 0
+    replace_existing = True
+    default_base_url = normalize_temp_worker_url(
+        coerce_text(payload.get("base_url") or payload.get("baseUrl") or TEMP_WORKER_URL)
+    )
+    default_site_password = coerce_text(payload.get("site_password") or payload.get("sitePassword"))
+    for address in incoming:
+        key = address.email.lower()
+        existing = addresses.get(key)
+        if existing:
+            if not replace_existing:
+                skipped += 1
+                continue
+            address.created_at = existing.created_at
+            if not usable_secret(address.jwt):
+                address.jwt = existing.jwt
+            if not address.base_url:
+                address.base_url = existing.base_url
+            if not address.site_password:
+                address.site_password = existing.site_password
+            updated += 1
+        else:
+            imported += 1
+        address.base_url = normalize_temp_worker_url(address.base_url or default_base_url)
+        address.site_password = address.site_password or default_site_password
+        address.updated_at = iso_now()
+        addresses[key] = address
+    if imported or updated:
+        save_temp_addresses(addresses, addresses_path)
+    return {
+        "success": True,
+        "imported": imported,
+        "updated": updated,
+        "skipped": skipped,
+        "errors": errors,
+        "addresses": [addr.public() for addr in addresses.values()],
+    }
+
+
 def delete_workspace_mail_credentials(payload: dict[str, Any], workspace_id: str = "public") -> dict[str, Any]:
     emails = [
         coerce_text(item).lower()
@@ -7998,6 +8043,9 @@ class Handler(BaseHTTPRequestHandler):
             return
         if request_path.lower() in {"/refresh", "/refresh/"}:
             self.serve_static_file(STATIC_DIR / "refresh.html")
+            return
+        if request_path.lower() in {"/mailboxes", "/mailboxes/"}:
+            self.serve_static_file(STATIC_DIR / "mailboxes.html")
             return
         if request_path.lower() in {"/warehouse", "/warehouse/"}:
             self.serve_static_file(STATIC_DIR / "warehouse.html")
@@ -8185,6 +8233,16 @@ class Handler(BaseHTTPRequestHandler):
                     "success": False,
                     "error": str(exc)[:500],
                     "error_code": "pickup_import_failed",
+                }, status=HTTPStatus.BAD_REQUEST)
+            return
+        if self.path == "/client-api/temp-addresses/import":
+            try:
+                self.send_json(import_temp_addresses(self.read_json(), self.workspace_id()))
+            except Exception as exc:
+                self.send_json({
+                    "success": False,
+                    "error": str(exc)[:500],
+                    "error_code": "temp_import_failed",
                 }, status=HTTPStatus.BAD_REQUEST)
             return
         if self.path == "/client-api/accounts/delete":
@@ -8533,6 +8591,8 @@ class Handler(BaseHTTPRequestHandler):
             target = STATIC_DIR / "converter.html"
         elif path in {"/refresh", "/refresh/"}:
             target = STATIC_DIR / "refresh.html"
+        elif path in {"/mailboxes", "/mailboxes/"}:
+            target = STATIC_DIR / "mailboxes.html"
         elif path in {"/warehouse", "/warehouse/"}:
             target = STATIC_DIR / "warehouse.html"
         else:

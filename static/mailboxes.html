@@ -1,0 +1,222 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>GPT账号管理助手 - 邮箱管理</title>
+  <link rel="stylesheet" href="/styles.css?v=20260601-mailbox-manager">
+  <link rel="stylesheet" href="/forge-theme.css?v=20260531-open-source-links">
+  <script src="/nav-links.js?v=20260531-docker-dns-links" defer></script>
+</head>
+<body>
+  <div class="shell mailbox-manager-shell">
+    <header class="topbar app-header">
+      <a class="brand" href="/" aria-label="GPT账号管理助手">
+        <span class="brand-mark" aria-hidden="true">
+          <svg viewBox="0 0 24 24" width="23" height="23">
+            <path d="M12 3 3.5 7.4 12 12l8.5-4.6L12 3Z"></path>
+            <path d="m4 12 8 4.3 8-4.3"></path>
+            <path d="m4 16.5 8 4.3 8-4.3"></path>
+          </svg>
+        </span>
+        <span class="brand-copy">
+          <strong>GPT账号管理助手</strong>
+          <em>邮箱资产 / 取码凭证 / 批量整理</em>
+        </span>
+      </a>
+      <nav class="topnav" aria-label="顶部导航">
+        <a class="github-link" href="https://github.com/margetrp-hub/gpt-account-manager" target="_blank" rel="noreferrer" aria-label="GitHub 开源项目">
+          <svg viewBox="0 0 16 16" aria-hidden="true">
+            <path d="M8 0C3.58 0 0 3.67 0 8.2c0 3.62 2.29 6.69 5.47 7.78.4.08.55-.18.55-.4 0-.2-.01-.84-.01-1.52-2.01.38-2.53-.5-2.69-.96-.09-.24-.48-.96-.82-1.15-.28-.16-.68-.55-.01-.56.63-.01 1.08.59 1.23.84.72 1.24 1.87.89 2.33.68.07-.53.28-.89.51-1.1-1.78-.21-3.64-.91-3.64-4.04 0-.89.31-1.62.82-2.19-.08-.21-.36-1.04.08-2.16 0 0 .67-.22 2.2.84A7.35 7.35 0 0 1 8 3.97c.68 0 1.36.09 2 .27 1.53-1.06 2.2-.84 2.2-.84.44 1.12.16 1.95.08 2.16.51.57.82 1.3.82 2.19 0 3.14-1.87 3.83-3.65 4.04.29.26.54.76.54 1.54 0 1.1-.01 1.99-.01 2.26 0 .22.15.48.55.4A8.08 8.08 0 0 0 16 8.2C16 3.67 12.42 0 8 0Z"></path>
+          </svg>
+          GitHub
+        </a>
+      </nav>
+    </header>
+
+    <nav class="module-tabs" aria-label="功能导航">
+      <a class="module-tab" href="/">
+        <span>✓</span>
+        <strong>账号管理</strong>
+      </a>
+      <a class="module-tab active" href="/mailboxes.html" aria-current="page">
+        <span>✉</span>
+        <strong>邮箱管理</strong>
+      </a>
+      <a class="module-tab" href="/refresh.html">
+        <span>↻</span>
+        <strong>凭证刷新</strong>
+      </a>
+      <a class="module-tab" href="/converter.html">
+        <span>⇄</span>
+        <strong>Session 转换</strong>
+      </a>
+      <a class="module-tab" href="/warehouse.html">
+        <span>→</span>
+        <strong>CPA 仓管</strong>
+      </a>
+    </nav>
+
+    <main class="mailbox-manager-layout">
+      <aside class="mailbox-manager-nav panel">
+        <div class="mailbox-manager-brand">
+          <span>✉</span>
+          <div>
+            <strong>邮箱管家</strong>
+            <em>统一管理取码邮箱</em>
+          </div>
+        </div>
+        <button class="mailbox-side-link active" type="button" data-manager-filter="all">
+          <span>总览</span>
+          <strong id="sideTotal">0</strong>
+        </button>
+        <button class="mailbox-side-link" type="button" data-manager-filter="microsoft">
+          <span>Outlook</span>
+          <strong id="sideMicrosoft">0</strong>
+        </button>
+        <button class="mailbox-side-link" type="button" data-manager-filter="temp">
+          <span>临时邮箱</span>
+          <strong id="sideTemp">0</strong>
+        </button>
+        <button class="mailbox-side-link" type="button" data-manager-filter="missing">
+          <span>资料不完整</span>
+          <strong id="sideMissing">0</strong>
+        </button>
+        <div class="mailbox-side-note">
+          <span>工作空间</span>
+          <strong id="workspaceText">-</strong>
+          <em>导入和删除会同步到当前工作空间。</em>
+        </div>
+      </aside>
+
+      <section class="panel mailbox-manager-main" aria-labelledby="mailbox-manager-title">
+        <div class="mailbox-manager-head">
+          <div>
+            <p class="eyebrow">Mailbox Management</p>
+            <h1 id="mailbox-manager-title">邮箱管理</h1>
+            <p>管理所有取码邮箱，支持 Outlook 四段和临时邮箱 JWT。</p>
+          </div>
+          <div class="mailbox-manager-stats" aria-label="邮箱统计">
+            <span>总数 <strong id="statTotal">0</strong></span>
+            <span>Outlook <strong id="statMicrosoft">0</strong></span>
+            <span>临时 <strong id="statTemp">0</strong></span>
+            <span>缺资料 <strong id="statMissing">0</strong></span>
+          </div>
+        </div>
+
+        <div class="mailbox-manager-toolbar">
+          <input id="mailboxSearchInput" type="search" placeholder="搜索邮箱、分组、权限类型">
+          <select id="mailboxSourceFilter" aria-label="来源筛选">
+            <option value="all">全部来源</option>
+            <option value="microsoft">Outlook</option>
+            <option value="temp">临时邮箱</option>
+            <option value="missing">资料不完整</option>
+          </select>
+          <select id="mailboxGroupFilter" aria-label="分组筛选">
+            <option value="all">全部分组</option>
+          </select>
+          <button id="syncMailboxesBtn" type="button">同步</button>
+          <button id="openMailboxImportBtn" class="primary" type="button">导入邮箱</button>
+        </div>
+
+        <div class="mailbox-manager-actions">
+          <label class="mailbox-select-all"><input id="selectAllMailboxes" type="checkbox"> 全选当前页</label>
+          <button id="copySelectedMailboxes" type="button">批量复制</button>
+          <button id="groupSelectedMailboxes" type="button">批量设置分组</button>
+          <button id="exportMailboxesBtn" type="button">导出备份</button>
+          <button id="deleteSelectedMailboxes" class="danger" type="button">批量删除</button>
+          <span id="mailboxActionStatus">等待同步。</span>
+        </div>
+
+        <div class="mailbox-table-wrap">
+          <table class="mailbox-manager-table">
+            <colgroup>
+              <col class="mailbox-col-select">
+              <col class="mailbox-col-index">
+              <col class="mailbox-col-email">
+              <col class="mailbox-col-password">
+              <col class="mailbox-col-group">
+              <col class="mailbox-col-token">
+              <col class="mailbox-col-kind">
+              <col class="mailbox-col-actions">
+            </colgroup>
+            <thead>
+              <tr>
+                <th></th>
+                <th>#</th>
+                <th>邮箱地址</th>
+                <th>密码</th>
+                <th>分组</th>
+                <th>令牌</th>
+                <th>权限类型</th>
+                <th>操作</th>
+              </tr>
+            </thead>
+            <tbody id="mailboxTableBody">
+              <tr>
+                <td colspan="8" class="mailbox-empty-row">正在读取邮箱。</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <div class="mailbox-manager-pagination">
+          <span id="mailboxPageSummary">0 条</span>
+          <select id="mailboxPageSize" aria-label="每页数量">
+            <option value="20">20 / 页</option>
+            <option value="50" selected>50 / 页</option>
+            <option value="100">100 / 页</option>
+          </select>
+          <button id="mailboxPrevPage" type="button" aria-label="上一页">‹</button>
+          <span id="mailboxPageText">1 / 1</span>
+          <button id="mailboxNextPage" type="button" aria-label="下一页">›</button>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <div id="mailboxImportModal" class="modal-backdrop mailbox-import-modal" hidden>
+    <section class="modal" role="dialog" aria-modal="true" aria-labelledby="mailbox-import-title">
+      <div class="modal-head">
+        <div>
+          <p class="eyebrow">Import</p>
+          <h2 id="mailbox-import-title">导入邮箱</h2>
+        </div>
+        <button id="closeMailboxImport" type="button" aria-label="关闭">×</button>
+      </div>
+      <label class="modal-field">
+        <span>导入类型</span>
+        <select id="mailboxImportSource">
+          <option value="auto">自动识别</option>
+          <option value="microsoft">Outlook 四段</option>
+          <option value="temp">临时邮箱 JWT</option>
+        </select>
+      </label>
+      <label class="modal-field" id="mailboxTempApiField">
+        <span>临时邮箱 API URL</span>
+        <input id="mailboxTempApi" placeholder="https://maip.wsphl.cfd">
+      </label>
+      <label class="modal-field" id="mailboxTempSitePasswordField">
+        <span>临时邮箱站点密钥</span>
+        <input id="mailboxTempSitePassword" placeholder="没有可留空">
+      </label>
+      <label class="modal-file" for="mailboxImportFile">
+        <span>选择 TXT / CSV / JSON 文件</span>
+        <em id="mailboxImportFileName">也可以直接粘贴到下面</em>
+        <input id="mailboxImportFile" type="file" accept=".txt,.csv,.json,text/plain,application/json">
+      </label>
+      <label class="modal-field">
+        <span>邮箱数据</span>
+        <textarea id="mailboxImportText" rows="8" spellcheck="false" placeholder="Outlook：email----password----client_id----refresh_token----分组&#10;临时邮箱：email----jwt----api_url----site_password----分组"></textarea>
+      </label>
+      <div id="mailboxImportPreview" class="import-preview">粘贴后会先预检格式。</div>
+      <div class="modal-actions">
+        <button id="cancelMailboxImport" type="button">取消</button>
+        <button id="confirmMailboxImport" class="primary" type="button">导入并同步</button>
+      </div>
+    </section>
+  </div>
+  <div id="toast" class="toast" role="status" aria-live="polite"></div>
+  <script src="/mailboxes.js?v=20260601-mailbox-manager" defer></script>
+</body>
+</html>

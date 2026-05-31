@@ -43,6 +43,7 @@
 ## 页面说明
 
 - `/`：账号管理台，导入邮箱、收信、查码、分组、删除本地缓存、推送刷新队列。
+- `/mailboxes.html`：邮箱管理台，集中整理 Outlook 四段和临时邮箱 JWT，支持批量导入、搜索筛选、分组、复制、导出和删除。
 - `/refresh.html`：凭证刷新队列，处理邮箱登录账号、CPA 同步、auth JSON 导出。
 - `/warehouse.html`：CPA 仓管，扫描异常账号、删除失效 auth、查看诊断原因。
 - `/converter.html`：本地 Session / auth JSON 转换工具。
