@@ -27,15 +27,8 @@ const state = {
 
 const MAIL_ACCOUNTS_KEY = "ctgptm.mail.accounts";
 const MAIL_TEMP_SETTINGS_KEY = "ctgptm.mail.tempSettings";
-const DEFAULT_TEMP_WORKER_URL = "https://maip.wsphl.cfd";
-const LEGACY_TEMP_WORKER_URLS = new Set([
-  "maip.ohlaoo.com",
-  "http://maip.ohlaoo.com",
-  "https://maip.ohlaoo.com",
-  "mapi.ohlaoo.com",
-  "http://mapi.ohlaoo.com",
-  "https://mapi.ohlaoo.com",
-]);
+const DEFAULT_TEMP_WORKER_URL = "";
+const LEGACY_TEMP_WORKER_URLS = new Set([]);
 
 const queryToken = new URLSearchParams(window.location.search).get("token") || "";
 const rememberedToken = localStorage.getItem("ctgptm.admin.toolToken") || "";

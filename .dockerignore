@@ -1,0 +1,15 @@
+.git
+.cache
+.ssh
+data
+node_modules
+output
+release
+extensions
+__pycache__
+*.pyc
+*.pyo
+*.log
+*.zip
+.env
+DEPLOY-mail.wsphl.cfd.md

@@ -14,6 +14,8 @@
 - 账号分组、封禁/异常标记、刷新队列管理。
 - CPA / CLIProxyAPI 仓管巡检，识别 RT 失效、会话失效、封禁、风控、额度耗尽、非 OpenAI 凭证等状态。
 - OpenAI OAuth 凭证刷新，并导出 CPA / Sub2API 可用的 auth JSON。
+- 确定失败账号一键清理：从 CPA、当前工作区邮箱池、刷新队列一起移除。
+- 长效手机接码池：手机号和 API URL 绑定到单个账号，遇到手机验证时可以独立取码和留痕。
 
 ## 我希望它解决的问题
 
@@ -65,6 +67,20 @@ data/workspaces/<workspace-id>/login_history.json
 管理员 `/api/*` 和 `/admin-api/*` 仍然是全局运维面，必须用 `MAIL_PICKUP_ADMIN_TOKEN` 保护。不要把管理员 token 发给普通用户。
 
 ## 快速运行
+
+Docker 运行：
+
+```bash
+cp .env.example .env
+# 编辑 .env，把 MAIL_PICKUP_ADMIN_TOKEN 换成 `openssl rand -hex 32` 生成的长随机令牌
+docker compose up -d --build
+```
+
+打开：
+
+```text
+http://127.0.0.1:8765/
+```
 
 本地直接运行：
 

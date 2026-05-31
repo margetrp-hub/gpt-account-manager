@@ -3,6 +3,7 @@ const STORAGE_KEYS = {
   categories: "ctgptm.mail.categories",
   refreshQueue: "ctgptm.mail.refreshQueue",
   refreshSettings: "ctgptm.mail.refreshSettings",
+  phonePool: "ctgptm.mail.phonePool",
   workspaceId: "ctgptm.workspaceId",
 };
 
@@ -44,6 +45,7 @@ const state = {
   selectedQueue: new Set(),
   jobs: new Map(),
   poller: undefined,
+  phonePool: normalizePhonePool(loadJson(STORAGE_KEYS.phonePool, [])),
   sourcePage: 1,
   savedRefreshResults: new Map(),
   runProxyIps: new Set(),
@@ -78,6 +80,12 @@ const NON_RETRYABLE_CODES = new Set([
   "request_forbidden",
 ]);
 
+const DEFINITIVE_DELETE_CODES = new Set([
+  "account_banned",
+  "account_not_found",
+  "unsupported_country_region_territory",
+]);
+
 const els = {
   sourceTotal: document.querySelector("#sourceTotal"),
   sourceSearch: document.querySelector("#sourceSearch"),
@@ -92,6 +100,7 @@ const els = {
   sourceList: document.querySelector("#sourceList"),
   startSelected: document.querySelector("#startSelected"),
   retryFailed: document.querySelector("#retryFailed"),
+  cleanFailed: document.querySelector("#cleanFailed"),
   exportCpa: document.querySelector("#exportCpa"),
   exportSub2: document.querySelector("#exportSub2"),
   clearQueue: document.querySelector("#clearQueue"),
@@ -121,6 +130,10 @@ const els = {
   syncTempCredentials: document.querySelector("#syncTempCredentials"),
   pickupImportText: document.querySelector("#pickupImportText"),
   importPickupCredentials: document.querySelector("#importPickupCredentials"),
+  phoneNumber: document.querySelector("#phoneNumber"),
+  phoneApiUrl: document.querySelector("#phoneApiUrl"),
+  addPhoneEntry: document.querySelector("#addPhoneEntry"),
+  phonePoolList: document.querySelector("#phonePoolList"),
 };
 
 const settings = loadJson(STORAGE_KEYS.refreshSettings, {});
@@ -269,6 +282,7 @@ const ERROR_MANUAL = {
   mail_credentials_missing: "缺取码邮箱",
   mail_pickup_unavailable: "取码邮箱不可用",
   admin_required: "需要管理员登录",
+  delete_failed: "删除失败",
   temp_sync_config_missing: "临时邮箱同步配置缺失",
   temp_sync_failed: "临时邮箱同步失败",
   pickup_import_empty: "缺少 Outlook 取码资料",
@@ -291,6 +305,10 @@ const ERROR_MANUAL = {
   invalid_auth_step: "登录步骤失效",
   request_forbidden: "请求被拒绝",
   proxy_ip_unavailable: "代理出口不可用",
+  phone_pool_empty: "手机池为空",
+  phone_pool_api_invalid: "手机 API 格式错误",
+  phone_code_missing: "未收到手机验证码",
+  phone_code_fetch_failed: "手机取码失败",
   network_incomplete_read: "网络中断",
   login_network_blocked: "网络受限",
   login_failed: "登录失败",
@@ -310,6 +328,8 @@ const LOG_STEP_LABELS = {
   waiting_code: "等待验证码",
   mail_code_poll: "查收邮箱",
   mail_code_missing: "未收到验证码",
+  phone_pool: "绑定手机",
+  phone_code: "手机取码",
   verify_code: "提交验证码",
   callback: "接收授权回调",
   cpa_callback: "提交授权回调",
@@ -651,8 +671,36 @@ function normalizeQueue(value) {
   });
 }
 
+function normalizePhonePool(value) {
+  if (!Array.isArray(value)) return [];
+  const seen = new Set();
+  return value.map((item) => {
+    const phone = String(item?.phone || "").trim();
+    const apiUrl = String(item?.api_url || item?.apiUrl || "").trim();
+    if (!phone || !apiUrl) return null;
+    const id = String(item?.id || `phone:${phone.toLowerCase()}`);
+    const key = id.toLowerCase();
+    if (seen.has(key)) return null;
+    seen.add(key);
+    return {
+      id,
+      phone,
+      api_url: apiUrl,
+      account_email: String(item?.account_email || item?.accountEmail || "").trim().toLowerCase(),
+      last_code: String(item?.last_code || item?.lastCode || ""),
+      last_message: String(item?.last_message || item?.lastMessage || ""),
+      last_checked_at: String(item?.last_checked_at || item?.lastCheckedAt || ""),
+      status: String(item?.status || "idle"),
+    };
+  }).filter(Boolean);
+}
+
 function saveQueue() {
   saveJson(STORAGE_KEYS.refreshQueue, state.queue);
+}
+
+function savePhonePool() {
+  saveJson(STORAGE_KEYS.phonePool, state.phonePool);
 }
 
 function sourceLabel(account) {
@@ -877,12 +925,13 @@ function renderQueue() {
     const status = displayStatus(job);
     const rawStatus = job.status || "idle";
     const errorText = formatJobError(job);
+    const phoneEntry = phoneEntryForRow(row);
     return `
       <tr data-id="${escapeHtml(row.id)}">
         <td><input class="abnormal-check queue-check" type="checkbox" ${state.selectedQueue.has(row.id) ? "checked" : ""}></td>
         <td>
           <strong>${escapeHtml(row.email || row.name || "-")}</strong>
-          <em>${escapeHtml(row.service || "本地邮箱")}</em>
+          <em>${escapeHtml(row.service || "本地邮箱")}${phoneEntry ? ` · 手机 ${escapeHtml(phoneEntry.phone)}` : ""}</em>
         </td>
         <td><span class="source-badge ${escapeHtml(row.source === "microsoft" ? "ms" : "temp")}">${escapeHtml(row.service || "本地邮箱")}</span></td>
         <td><span class="login-status ${escapeHtml(status)}">${escapeHtml(loginLabel(status))}</span></td>
@@ -897,6 +946,307 @@ function selectedQueueRows({ failedOnly = false } = {}) {
   const chosen = state.queue.filter((row) => state.selectedQueue.has(row.id));
   const base = chosen.length ? chosen : state.queue;
   return failedOnly ? base.filter((row) => rowState(row).status === "failed") : base;
+}
+
+function selectedSingleQueueRow() {
+  const rows = state.queue.filter((row) => state.selectedQueue.has(row.id));
+  return rows.length === 1 ? rows[0] : null;
+}
+
+function phoneEntryForRow(row) {
+  const key = accountEmailKey(row.email || row.name);
+  if (!key) return null;
+  return state.phonePool.find((item) => accountEmailKey(item.account_email) === key) || null;
+}
+
+function formatPhoneTime(value) {
+  const parsed = Date.parse(value || "");
+  if (!Number.isFinite(parsed)) return "";
+  return new Date(parsed).toLocaleTimeString("zh-CN", {
+    hour12: false,
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+  });
+}
+
+function renderPhonePool() {
+  if (!els.phonePoolList) return;
+  if (!state.phonePool.length) {
+    els.phonePoolList.innerHTML = '<div class="phone-pool-empty">还没有长效手机。</div>';
+    return;
+  }
+  els.phonePoolList.innerHTML = state.phonePool.map((item) => {
+    const status = item.last_code
+      ? `最近验证码 ${item.last_code}${item.last_checked_at ? ` · ${formatPhoneTime(item.last_checked_at)}` : ""}`
+      : (item.status === "error" ? "取码失败" : "等待取码");
+    const bound = item.account_email ? item.account_email : "未绑定账号";
+    return `
+      <div class="phone-pool-row" data-id="${escapeHtml(item.id)}">
+        <div>
+          <strong>${escapeHtml(item.phone)}</strong>
+          <em>${escapeHtml(bound)} · ${escapeHtml(status)}</em>
+        </div>
+        <div class="phone-pool-actions">
+          <button class="bind-phone" type="button">绑定选中</button>
+          <button class="poll-phone" type="button">取码</button>
+          <button class="remove-phone danger" type="button">删除</button>
+        </div>
+      </div>
+    `;
+  }).join("");
+}
+
+function validPhoneApiUrl(value) {
+  try {
+    const url = new URL(String(value || "").trim()
+      .replace(/\{phone\}/g, "10000000000")
+      .replace(/\{email\}/g, "user@example.com")
+      .replace(/\{account\}/g, "user@example.com")
+      .replace(/\{since\}/g, "0")
+      .replace(/\{ts\}/g, String(Date.now())));
+    return url.protocol === "http:" || url.protocol === "https:";
+  } catch {
+    return false;
+  }
+}
+
+function addOrUpdatePhoneEntry() {
+  const phone = els.phoneNumber ? els.phoneNumber.value.trim() : "";
+  const apiUrl = els.phoneApiUrl ? els.phoneApiUrl.value.trim() : "";
+  if (!phone || !apiUrl) {
+    toast("请填写手机号和接码 API");
+    return;
+  }
+  if (!validPhoneApiUrl(apiUrl)) {
+    toast("接码 API 必须是 http/https URL");
+    addLog("手机 API 格式错误", "error", { error_code: "phone_pool_api_invalid" });
+    return;
+  }
+  const selected = selectedSingleQueueRow();
+  const accountEmail = selected ? accountEmailKey(selected.email || selected.name) : "";
+  const id = `phone:${phone.toLowerCase()}`;
+  const existing = state.phonePool.find((item) => item.id === id || item.phone === phone);
+  if (accountEmail) {
+    state.phonePool.forEach((item) => {
+      if (item.id !== id && accountEmailKey(item.account_email) === accountEmail) {
+        item.account_email = "";
+      }
+    });
+  }
+  const next = {
+    ...(existing || {}),
+    id,
+    phone,
+    api_url: apiUrl,
+    account_email: accountEmail || existing?.account_email || "",
+    status: existing?.status || "idle",
+    last_code: existing?.last_code || "",
+    last_message: existing?.last_message || "",
+    last_checked_at: existing?.last_checked_at || "",
+  };
+  if (existing) {
+    Object.assign(existing, next);
+  } else {
+    state.phonePool.push(next);
+  }
+  savePhonePool();
+  renderAll();
+  toast(accountEmail ? "手机号已加入并绑定选中账号" : "手机号已加入手机池");
+}
+
+function bindPhoneToSelected(phoneId) {
+  const item = state.phonePool.find((entry) => entry.id === phoneId);
+  const row = selectedSingleQueueRow();
+  if (!item) return;
+  if (!row) {
+    toast("请只勾选一个队列账号再绑定");
+    return;
+  }
+  const accountEmail = accountEmailKey(row.email || row.name);
+  state.phonePool.forEach((entry) => {
+    if (entry.id !== phoneId && accountEmailKey(entry.account_email) === accountEmail) {
+      entry.account_email = "";
+    }
+  });
+  item.account_email = accountEmail;
+  row.phone_id = item.id;
+  row.phone_number = item.phone;
+  savePhonePool();
+  saveQueue();
+  renderAll();
+  addLog(`${row.email} 已绑定长效手机`, "success", { step: "phone_pool", email: row.email });
+}
+
+function removePhoneEntry(phoneId) {
+  const item = state.phonePool.find((entry) => entry.id === phoneId);
+  if (!item) return;
+  if (!confirm(`删除长效手机 ${item.phone}？不会删除账号，只会解除绑定。`)) return;
+  state.phonePool = state.phonePool.filter((entry) => entry.id !== phoneId);
+  state.queue.forEach((row) => {
+    if (row.phone_id === phoneId || String(row.phone_number || "") === item.phone) {
+      delete row.phone_id;
+      delete row.phone_number;
+    }
+  });
+  savePhonePool();
+  saveQueue();
+  renderAll();
+}
+
+async function pollPhoneEntry(phoneId) {
+  const item = state.phonePool.find((entry) => entry.id === phoneId);
+  if (!item) return;
+  item.status = "running";
+  savePhonePool();
+  renderPhonePool();
+  try {
+    const response = await fetch("/client-api/phone-code/poll", {
+      method: "POST",
+      headers: apiHeaders(),
+      body: JSON.stringify({
+        phone: item.phone,
+        api_url: item.api_url,
+        account_email: item.account_email,
+        since: item.last_checked_at || "",
+      }),
+    });
+    const data = await readJsonResponse(response, "手机取码失败");
+    item.last_checked_at = data.checked_at || new Date().toISOString();
+    item.last_message = data.message || "";
+    item.status = data.found ? "found" : "idle";
+    if (data.code) item.last_code = String(data.code);
+    savePhonePool();
+    renderPhonePool();
+    if (data.found) {
+      addLog(`${item.account_email || item.phone} 手机验证码：${data.code}`, "success", { step: "phone_code", email: item.account_email });
+      toast(`收到手机验证码 ${data.code}`);
+    } else {
+      addLog(`${item.account_email || item.phone} 暂未收到手机验证码`, "warning", { error_code: "phone_code_missing", email: item.account_email });
+      toast("暂未收到手机验证码");
+    }
+  } catch (error) {
+    const details = error.details || { error: error.message || "手机取码失败", error_code: "phone_code_fetch_failed" };
+    item.status = "error";
+    item.last_message = details.error || "手机取码失败";
+    item.last_checked_at = new Date().toISOString();
+    savePhonePool();
+    renderPhonePool();
+    addLog(formatJobError(details), "error", { error_code: details.error_code || "phone_code_fetch_failed", email: item.account_email });
+  }
+}
+
+function definitiveFailedRows() {
+  const base = state.selectedQueue.size
+    ? state.queue.filter((row) => state.selectedQueue.has(row.id))
+    : state.queue;
+  return base.filter((row) => {
+    const job = rowState(row);
+    if (job.status !== "failed") return false;
+    return DEFINITIVE_DELETE_CODES.has(inferErrorCode(job));
+  });
+}
+
+function cpaDeleteGroups(rows) {
+  const groups = new Map();
+  rows.forEach((row) => {
+    const name = row.cpa_name || row.name || row.email || "";
+    const baseUrl = row.cpa_base_url || (els.cpaBaseUrl ? els.cpaBaseUrl.value.trim() : "");
+    const key = row.cpa_management_key || (els.cpaManagementKey ? els.cpaManagementKey.value.trim() : "");
+    if (!name || (!row.auth_index && row.source_kind !== "cpa" && row.source !== "cpa")) return;
+    if (!baseUrl || !key) return;
+    const groupKey = `${baseUrl}\n${key}`;
+    if (!groups.has(groupKey)) {
+      groups.set(groupKey, { baseUrl, managementKey: key, items: [] });
+    }
+    groups.get(groupKey).items.push({
+      name,
+      id: row.auth_index || name,
+      email: row.email,
+      auth_index: row.auth_index || "",
+    });
+  });
+  return [...groups.values()];
+}
+
+async function deleteCpaRows(rows) {
+  const groups = cpaDeleteGroups(rows);
+  let deleted = 0;
+  for (const group of groups) {
+    const response = await fetch("/client-api/cpa/delete", {
+      method: "POST",
+      headers: apiHeaders(),
+      body: JSON.stringify({
+        base_url: group.baseUrl,
+        management_key: group.managementKey,
+        items: group.items,
+      }),
+    });
+    const data = await readJsonResponse(response, "CPA 删除失败");
+    deleted += Number(data.summary?.deleted || 0);
+    (data.results || [])
+      .filter((item) => !item.ok)
+      .slice(0, 5)
+      .forEach((item) => addLog(`${item.email || item.name || ""} CPA 删除失败`, "warning", { error_code: "delete_failed" }));
+  }
+  return deleted;
+}
+
+async function deleteWorkspaceMailCredentials(emails) {
+  if (!emails.length) return { microsoft: 0, temp: 0 };
+  const response = await fetch("/client-api/accounts/delete", {
+    method: "POST",
+    headers: apiHeaders(),
+    body: JSON.stringify({ emails }),
+  });
+  const data = await readJsonResponse(response, "邮箱池删除失败");
+  return data.deleted || { microsoft: 0, temp: 0 };
+}
+
+async function cleanDefinitiveFailures() {
+  const rows = definitiveFailedRows();
+  if (!rows.length) {
+    toast("没有可清理的确定失败账号");
+    addLog("没有可清理的确定失败账号", "warning");
+    return;
+  }
+  const counts = rows.reduce((acc, row) => {
+    const code = inferErrorCode(rowState(row));
+    acc[code] = (acc[code] || 0) + 1;
+    return acc;
+  }, {});
+  const summary = Object.entries(counts).map(([code, count]) => `${errorCodeLabel(code)} ${count}`).join("，");
+  if (!confirm(`将清理 ${rows.length} 个确定失败账号：${summary}\n\n会尝试从 CPA 删除，并从本地邮箱池和刷新队列移除。继续？`)) {
+    return;
+  }
+  const emails = [...new Set(rows.map((row) => accountEmailKey(row.email || row.name)).filter(Boolean))];
+  let cpaDeleted = 0;
+  let workspaceDeleted = { microsoft: 0, temp: 0 };
+  try {
+    cpaDeleted = await deleteCpaRows(rows);
+  } catch (error) {
+    const details = error.details || { error: error.message || "CPA 删除失败", error_code: "delete_failed" };
+    addLog(formatJobError(details), "warning", { error_code: details.error_code || "delete_failed" });
+  }
+  try {
+    workspaceDeleted = await deleteWorkspaceMailCredentials(emails);
+  } catch (error) {
+    const details = error.details || { error: error.message || "邮箱池删除失败", error_code: "delete_failed" };
+    addLog(formatJobError(details), "warning", { error_code: details.error_code || "delete_failed" });
+  }
+  const emailSet = new Set(emails);
+  state.accounts = state.accounts.filter((account) => !emailSet.has(accountEmailKey(account.email)));
+  const rowIds = new Set(rows.map((row) => row.id));
+  state.queue = state.queue.filter((row) => !rowIds.has(row.id));
+  rows.forEach((row) => {
+    state.jobs.delete(row.id);
+    state.selectedQueue.delete(row.id);
+  });
+  saveJson(STORAGE_KEYS.accounts, state.accounts);
+  saveQueue();
+  renderAll();
+  addLog(`清理完成：队列 ${rows.length}，CPA ${cpaDeleted}，邮箱池 Outlook ${workspaceDeleted.microsoft || 0} / 临时 ${workspaceDeleted.temp || 0}`, "success");
+  toast(`已清理 ${rows.length} 个确定失败账号`);
 }
 
 function accountForRow(row) {
@@ -945,6 +1295,7 @@ function loginPayload(row) {
   const sameEmail = state.accounts.filter((item) => String(item.email || "").toLowerCase() === String(email || "").toLowerCase());
   const isCpa = row.source_kind === "cpa";
   const mode = els.taskMode ? els.taskMode.value : "login";
+  const phoneEntry = phoneEntryForRow(row);
   
   let base_url = isCpa ? row.cpa_base_url || "" : "";
   let management_key = isCpa ? row.cpa_management_key || "" : "";
@@ -972,6 +1323,9 @@ function loginPayload(row) {
     use_stored_mail_credentials: true,
     email,
     password,
+    phone_number: phoneEntry?.phone || row.phone_number || "",
+    phone_api_url: phoneEntry?.api_url || row.phone_api_url || "",
+    phone_binding_id: phoneEntry?.id || row.phone_id || "",
     row: {
       ...row,
       name: row.cpa_name || row.name || email,
@@ -1494,6 +1848,7 @@ async function exportResults(format) {
 function renderAll() {
   renderSources();
   renderQueue();
+  renderPhonePool();
 }
 
 function normalizeServerAccount(item, source) {
@@ -1787,6 +2142,9 @@ els.queueBody.addEventListener("click", (event) => {
 });
 els.startSelected.addEventListener("click", () => startRows(selectedQueueRows()));
 els.retryFailed.addEventListener("click", () => startRows(selectedQueueRows({ failedOnly: true })));
+if (els.cleanFailed) {
+  els.cleanFailed.addEventListener("click", cleanDefinitiveFailures);
+}
 els.exportCpa.addEventListener("click", () => exportResults("cpa"));
 els.exportSub2.addEventListener("click", () => exportResults("sub2"));
 if (els.syncTempCredentials) {
@@ -1794,6 +2152,22 @@ if (els.syncTempCredentials) {
 }
 if (els.importPickupCredentials) {
   els.importPickupCredentials.addEventListener("click", importPickupCredentials);
+}
+if (els.addPhoneEntry) {
+  els.addPhoneEntry.addEventListener("click", addOrUpdatePhoneEntry);
+}
+if (els.phonePoolList) {
+  els.phonePoolList.addEventListener("click", (event) => {
+    const row = event.target.closest(".phone-pool-row");
+    if (!row) return;
+    if (event.target.closest(".bind-phone")) {
+      bindPhoneToSelected(row.dataset.id);
+    } else if (event.target.closest(".poll-phone")) {
+      pollPhoneEntry(row.dataset.id);
+    } else if (event.target.closest(".remove-phone")) {
+      removePhoneEntry(row.dataset.id);
+    }
+  });
 }
 els.clearQueue.addEventListener("click", () => {
   state.queue = [];

@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>GPT账号管理助手 - 凭证刷新</title>
-  <link rel="stylesheet" href="/styles.css?v=20260531-refresh-stability">
+  <link rel="stylesheet" href="/styles.css?v=20260531-docker-phone-cleanup">
   <link rel="stylesheet" href="/forge-theme.css?v=20260531-open-source-links">
 </head>
 <body>
@@ -100,6 +100,7 @@
             <div class="login-actions">
               <button id="startSelected" class="primary" type="button">执行选中</button>
               <button id="retryFailed" type="button">重试失败</button>
+              <button id="cleanFailed" class="ghost danger" type="button">清理确定失败</button>
               <button id="exportCpa" type="button">下载 CPA JSON</button>
               <button id="exportSub2" type="button">下载 sub2 JSON</button>
               <button id="clearQueue" class="ghost danger" type="button">清空队列</button>
@@ -140,10 +141,24 @@
             <label class="toggle">
               <span>临时邮箱同步</span>
             </label>
-            <input id="tempSyncApi" type="url" placeholder="Temp API，例如 https://maip.wsphl.cfd">
+            <input id="tempSyncApi" type="url" placeholder="Temp API，例如 https://your-temp-worker.example">
             <input id="tempSyncAdminKey" type="password" autocomplete="off" placeholder="管理员密钥">
             <input id="tempSyncSitePassword" type="password" autocomplete="off" placeholder="站点密钥，可选">
             <button id="syncTempCredentials" type="button">同步队列 JWT</button>
+          </div>
+          <div class="phone-pool-panel">
+            <div class="phone-pool-head">
+              <strong>长效手机池</strong>
+              <span>格式：手机号 + 接码 API，绑定到单个账号；API 可用 {phone}、{email} 占位。</span>
+            </div>
+            <div class="phone-pool-form">
+              <input id="phoneNumber" placeholder="手机号，例如 +12025550123">
+              <input id="phoneApiUrl" placeholder="接码 API URL，例如 https://api.example.com/sms?phone={phone}">
+              <button id="addPhoneEntry" type="button">加入/更新</button>
+            </div>
+            <div id="phonePoolList" class="phone-pool-list">
+              <div class="phone-pool-empty">还没有长效手机。</div>
+            </div>
           </div>
           <div class="login-stats">
             <span>队列 <strong id="queueTotal">0</strong></span>
@@ -190,6 +205,6 @@
     </main>
   </div>
   <div id="toast" class="toast" role="status" aria-live="polite"></div>
-  <script src="/refresh.js?v=20260531-refresh-stability" defer></script>
+  <script src="/refresh.js?v=20260531-docker-phone-cleanup" defer></script>
 </body>
 </html>

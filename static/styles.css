@@ -848,6 +848,102 @@ button:disabled {
   white-space: nowrap;
 }
 
+.phone-pool-panel {
+  display: grid;
+  gap: 7px;
+  padding: 8px;
+  border: 1px solid rgba(142, 165, 199, 0.22);
+  border-radius: 8px;
+  background: rgba(246, 249, 253, 0.78);
+}
+
+.phone-pool-head,
+.phone-pool-form,
+.phone-pool-row,
+.phone-pool-actions {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.phone-pool-head {
+  justify-content: space-between;
+  min-width: 0;
+  color: #25405f;
+  font-size: 12px;
+  font-weight: 850;
+}
+
+.phone-pool-head span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: #64748b;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.phone-pool-form {
+  display: grid;
+  grid-template-columns: minmax(130px, 0.45fr) minmax(220px, 1fr) auto;
+}
+
+.phone-pool-form input {
+  min-height: 30px;
+}
+
+.phone-pool-list {
+  display: grid;
+  gap: 5px;
+  max-height: 116px;
+  overflow: auto;
+}
+
+.phone-pool-row {
+  justify-content: space-between;
+  padding: 6px 7px;
+  border: 1px solid rgba(142, 165, 199, 0.18);
+  border-radius: 7px;
+  background: rgba(255, 255, 255, 0.68);
+}
+
+.phone-pool-row > div:first-child {
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+}
+
+.phone-pool-row strong,
+.phone-pool-row em {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.phone-pool-row strong {
+  color: var(--ink);
+  font-size: 12px;
+}
+
+.phone-pool-row em,
+.phone-pool-empty {
+  color: #64748b;
+  font-size: 11px;
+  font-style: normal;
+}
+
+.phone-pool-actions {
+  flex: 0 0 auto;
+}
+
+.phone-pool-actions button {
+  min-height: 25px;
+  padding: 3px 7px;
+  font-size: 11px;
+}
+
 .refresh-options .toggle {
   min-height: 30px;
   padding: 0 6px;

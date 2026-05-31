@@ -47,7 +47,33 @@ dig +short example.com
 
 这里应该返回你的 VPS 公网 IP。
 
-## 3. 上传发布包
+## 3. Docker 部署
+
+如果你不想写 systemd，可以直接用 Docker Compose：
+
+```bash
+git clone https://github.com/margetrp-hub/gpt-account-manager.git
+cd gpt-account-manager
+cp .env.example .env
+nano .env
+docker compose up -d --build
+```
+
+`.env` 里至少设置：
+
+```bash
+MAIL_PICKUP_ADMIN_TOKEN=换成一串长随机令牌
+GPT_ACCOUNT_MANAGER_TEMP_WORKER_URL=https://your-temp-worker.example
+```
+
+容器会把数据写到当前目录的 `data/`，升级时保留这个目录即可：
+
+```bash
+git pull
+docker compose up -d --build
+```
+
+## 4. 上传发布包
 
 上传压缩包到 VPS，例如：
 
@@ -72,7 +98,7 @@ cd /opt/ctgptm-mail-assistant
 sudo npm install --omit=dev --cache /tmp/gpt-account-manager-npm-cache --no-audit --no-fund
 ```
 
-## 4. 配置环境变量
+## 5. 配置环境变量
 
 复制模板：
 
@@ -123,7 +149,7 @@ sudo chown root:www-data /etc/ctgptm-mail-assistant.env
 sudo chmod 640 /etc/ctgptm-mail-assistant.env
 ```
 
-## 5. 安装 systemd 服务
+## 6. 安装 systemd 服务
 
 ```bash
 sudo cp /opt/ctgptm-mail-assistant/deploy/ctgptm-mail-assistant.service /etc/systemd/system/
@@ -140,7 +166,7 @@ curl -I http://127.0.0.1:8765/
 
 应该返回 `200 OK`。
 
-## 6. 配置 Nginx
+## 7. 配置 Nginx
 
 可以从 `deploy/nginx.example.conf` 复制一份，替换 `server_name`：
 
@@ -164,7 +190,7 @@ sudo certbot --nginx -d example.com
 sudo certbot renew --dry-run
 ```
 
-## 7. 访问地址
+## 8. 访问地址
 
 ```text
 https://example.com/
@@ -176,7 +202,7 @@ https://example.com/admin.html?token=你的_MAIL_PICKUP_ADMIN_TOKEN
 
 CPA 仓管默认地址可以填 `http://localhost:8317`，管理密钥填 CPA / CLIProxyAPI 的 management key。点击巡检后会诊断 auth file 状态；需要重新授权的账号可以推入刷新流程。
 
-## 8. 导入格式
+## 9. 导入格式
 
 临时邮箱：
 
@@ -190,7 +216,7 @@ Microsoft 邮箱：
 email----password----client_id----refresh_token----分类(可选)
 ```
 
-## 9. 常用命令
+## 10. 常用命令
 
 查看服务日志：
 

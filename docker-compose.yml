@@ -1,0 +1,21 @@
+services:
+  gpt-account-manager:
+    build: .
+    image: gpt-account-manager:latest
+    container_name: gpt-account-manager
+    restart: unless-stopped
+    env_file:
+      - .env
+    ports:
+      - "8765:8765"
+    environment:
+      MAIL_PICKUP_HOST: 0.0.0.0
+      MAIL_PICKUP_PORT: 8765
+      MAIL_PICKUP_ADMIN_TOKEN: ${MAIL_PICKUP_ADMIN_TOKEN:?set MAIL_PICKUP_ADMIN_TOKEN in .env}
+      GPT_ACCOUNT_MANAGER_APP_TITLE: GPT账号管理助手
+      GPT_ACCOUNT_MANAGER_TEMP_WORKER_URL: ${GPT_ACCOUNT_MANAGER_TEMP_WORKER_URL:-}
+      GPT_ACCOUNT_MANAGER_TEMP_SITE_PASSWORD: ${GPT_ACCOUNT_MANAGER_TEMP_SITE_PASSWORD:-}
+      MAIL_PICKUP_LOGIN_STRATEGY: protocol
+      MAIL_PICKUP_NODE_BIN: node
+    volumes:
+      - ./data:/app/data

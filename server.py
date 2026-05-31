@@ -70,7 +70,7 @@ TEMP_ADDRESSES_FILE = DATA_DIR / "temp_addresses.json"
 REFRESH_RESULTS_FILE = DATA_DIR / "refresh_results.json"
 LOGIN_HISTORY_FILE = DATA_DIR / "login_history.json"
 LOGIN_DEBUG_DIR = DATA_DIR / "login_debug"
-APP_VERSION = "20260531-refresh-stability"
+APP_VERSION = "20260531-docker-phone-cleanup"
 
 DEFAULT_HOST = os.environ.get("MAIL_PICKUP_HOST", "127.0.0.1")
 DEFAULT_PORT = int(os.environ.get("MAIL_PICKUP_PORT", "8765"))
@@ -82,8 +82,13 @@ PUBLIC_POOL_URL = (os.environ.get("GPT_ACCOUNT_MANAGER_PUBLIC_POOL_URL") or os.e
 PUBLIC_POOL_API_URL = (os.environ.get("GPT_ACCOUNT_MANAGER_PUBLIC_POOL_API_URL") or os.environ.get("CTGPTM_PUBLIC_POOL_API_URL", "")).strip()
 PUBLIC_POOL_TOKEN = (os.environ.get("GPT_ACCOUNT_MANAGER_PUBLIC_POOL_TOKEN") or os.environ.get("CTGPTM_PUBLIC_POOL_TOKEN", "")).strip()
 PUBLIC_APP_TITLE = (os.environ.get("GPT_ACCOUNT_MANAGER_APP_TITLE") or os.environ.get("CTGPTM_APP_TITLE", "GPT账号管理助手")).strip()
-DEFAULT_TEMP_WORKER_URL = "https://maip.wsphl.cfd"
-TEMP_WORKER_DNS_FALLBACK_IPS = ["104.21.28.208", "172.67.147.149"]
+DEFAULT_TEMP_WORKER_URL = ""
+TEMP_WORKER_DNS_FALLBACK_IPS = [
+    item.strip()
+    for item in os.environ.get("GPT_ACCOUNT_MANAGER_TEMP_WORKER_FALLBACK_IPS", "").split(",")
+    if item.strip()
+]
+TEMP_WORKER_DNS_FALLBACK_HOST = urllib.parse.urlparse(DEFAULT_TEMP_WORKER_URL).hostname or ""
 OPENAI_STATIC_FALLBACK_IPS = {
     "chatgpt.com": ["104.18.32.47", "172.64.155.209"],
     "auth.openai.com": ["104.18.41.241", "172.64.146.15"],
@@ -103,21 +108,14 @@ MICROSOFT_STATIC_FALLBACK_IPS = {
     "login.live.com": ["20.190.151.131", "20.190.151.132", "20.190.151.67", "20.190.151.68"],
 }
 STATIC_DNS_FALLBACK_IPS = {
-    "maip.wsphl.cfd": TEMP_WORKER_DNS_FALLBACK_IPS,
+    **({TEMP_WORKER_DNS_FALLBACK_HOST: TEMP_WORKER_DNS_FALLBACK_IPS} if TEMP_WORKER_DNS_FALLBACK_HOST and TEMP_WORKER_DNS_FALLBACK_IPS else {}),
     **OPENAI_STATIC_FALLBACK_IPS,
     **MICROSOFT_STATIC_FALLBACK_IPS,
 }
 DNS_FALLBACK_HOSTS = set(STATIC_DNS_FALLBACK_IPS) | MICROSOFT_DNS_FALLBACK_HOSTS
 DNS_FALLBACK_CACHE: dict[str, list[str]] = {}
 DNS_OVERRIDE_LOCK = threading.RLock()
-LEGACY_TEMP_WORKER_URLS = {
-    normalize_base_url("maip.ohlaoo.com"),
-    normalize_base_url("http://maip.ohlaoo.com"),
-    normalize_base_url("https://maip.ohlaoo.com"),
-    normalize_base_url("mapi.ohlaoo.com"),
-    normalize_base_url("http://mapi.ohlaoo.com"),
-    normalize_base_url("https://mapi.ohlaoo.com"),
-}
+LEGACY_TEMP_WORKER_URLS: set[str] = set()
 
 
 def normalize_temp_worker_url(value: str) -> str:
@@ -630,6 +628,162 @@ def http_json(url: str, *, method: str = "GET", data: dict[str, Any] | None = No
         raise RuntimeError(network_error_message(url, exc)) from exc
 
 
+def http_text(url: str, *, headers: dict[str, str] | None = None, timeout: int = 30) -> tuple[int, str]:
+    final_headers = dict(DEFAULT_HTTP_HEADERS)
+    final_headers["Accept"] = "application/json,text/plain,*/*"
+    if headers:
+        final_headers.update(headers)
+    req = urllib.request.Request(url, headers=final_headers, method="GET")
+    try:
+        with urlopen_with_dns_retry(req, timeout=timeout) as resp:
+            raw = resp.read()
+            return int(getattr(resp, "status", 200) or 200), raw.decode("utf-8", errors="replace")
+    except urllib.error.HTTPError as exc:
+        text = exc.read().decode("utf-8", errors="replace")
+        raise RuntimeError(f"HTTP {exc.code}: {text[:240]}") from exc
+    except urllib.error.URLError as exc:
+        raise RuntimeError(network_error_message(url, exc)) from exc
+
+
+SMS_CODE_PATTERN = re.compile(r"\b\d{4,8}\b")
+SMS_EMPTY_PATTERN = re.compile(r"^(?:no\s*(?:sms|message)|empty|none|null|暂无|没有|未收到)$", re.I)
+SMS_GENERIC_OK_PATTERN = re.compile(r"^(?:ok|success|successful|true|请求成功|成功)$", re.I)
+SMS_MESSAGE_FIELDS = {
+    "data",
+    "message",
+    "msg",
+    "content",
+    "text",
+    "body",
+    "sms",
+    "otp",
+    "code",
+    "verifycode",
+    "verificationcode",
+    "captcha",
+    "result",
+    "value",
+}
+SMS_IGNORE_FIELDS = {"status", "statuscode", "httpstatus", "ret", "errno", "errorcode"}
+
+
+def normalize_sms_field_name(value: str) -> str:
+    return re.sub(r"[^a-z0-9]", "", str(value or "").lower())
+
+
+def collect_sms_candidates(value: Any, key: str = "", depth: int = 0) -> list[dict[str, Any]]:
+    if value is None or depth > 6:
+        return []
+    key_norm = normalize_sms_field_name(key)
+    if key_norm in SMS_IGNORE_FIELDS:
+        return []
+    if isinstance(value, str):
+        text = value.strip()
+        candidates = []
+        if text and len(text) <= 800:
+            candidates.append({
+                "text": text,
+                "key": key_norm,
+                "depth": depth,
+                "preferred": key_norm in SMS_MESSAGE_FIELDS,
+            })
+        if text and text[:1] in "{[":
+            try:
+                candidates.extend(collect_sms_candidates(json.loads(text), key, depth + 1))
+            except Exception:
+                pass
+        return candidates
+    if isinstance(value, (int, float)):
+        if key_norm in {"otp", "smscode", "verifycode", "verificationcode", "captcha", "code"}:
+            return [{
+                "text": str(int(value)),
+                "key": key_norm,
+                "depth": depth,
+                "preferred": True,
+            }]
+        return []
+    if isinstance(value, list):
+        out: list[dict[str, Any]] = []
+        for item in value:
+            out.extend(collect_sms_candidates(item, key, depth + 1))
+        return out
+    if isinstance(value, dict):
+        out: list[dict[str, Any]] = []
+        for child_key, child_value in value.items():
+            out.extend(collect_sms_candidates(child_value, str(child_key), depth + 1))
+        return out
+    return []
+
+
+def extract_sms_code_payload(raw_payload: Any) -> dict[str, str]:
+    candidates = collect_sms_candidates(raw_payload)
+    scored: list[tuple[int, dict[str, Any], str]] = []
+    for candidate in candidates:
+        text = coerce_text(candidate.get("text"))
+        if not text or SMS_EMPTY_PATTERN.fullmatch(text) or SMS_GENERIC_OK_PATTERN.fullmatch(text):
+            continue
+        code_match = SMS_CODE_PATTERN.search(text)
+        code = code_match.group(0) if code_match else ""
+        score = (100 if code else 0) + (30 if candidate.get("preferred") else 0)
+        if re.search(r"code|verify|verification|otp|openai|chatgpt|验证码|安全", text, re.I):
+            score += 20
+        score -= int(candidate.get("depth") or 0)
+        scored.append((score, candidate, code))
+    if scored:
+        scored.sort(key=lambda item: item[0], reverse=True)
+        _, candidate, code = scored[0]
+        return {"code": code, "message": coerce_text(candidate.get("text"))}
+    fallback = next((coerce_text(item.get("text")) for item in candidates if coerce_text(item.get("text"))), "")
+    return {"code": "", "message": fallback}
+
+
+def phone_api_url(template: str, *, phone: str, account_email: str, since: str = "") -> str:
+    raw = coerce_text(template)
+    if not raw:
+        raise RuntimeError("接码 API URL 不能为空")
+    replacements = {
+        "{phone}": urllib.parse.quote(phone, safe=""),
+        "{email}": urllib.parse.quote(account_email, safe=""),
+        "{account}": urllib.parse.quote(account_email, safe=""),
+        "{since}": urllib.parse.quote(since),
+        "{ts}": str(int(time.time())),
+    }
+    for token, value in replacements.items():
+        raw = raw.replace(token, value)
+    parsed = urllib.parse.urlparse(raw)
+    if parsed.scheme not in {"http", "https"} or not parsed.hostname:
+        raise RuntimeError("接码 API URL 必须是 http/https 地址")
+    validate_remote_base_url(raw)
+    return raw
+
+
+def poll_phone_code(payload: dict[str, Any]) -> dict[str, Any]:
+    phone = coerce_text(payload.get("phone") or payload.get("phone_number") or payload.get("phoneNumber"))
+    account_email = coerce_text(payload.get("account_email") or payload.get("email") or payload.get("account"))
+    api_url = coerce_text(payload.get("api_url") or payload.get("apiUrl"))
+    since = coerce_text(payload.get("since"))
+    if not phone:
+        raise RuntimeError("手机号不能为空")
+    url = phone_api_url(api_url, phone=phone, account_email=account_email, since=since)
+    status, text = http_text(url, timeout=30)
+    try:
+        raw_payload: Any = json.loads(text)
+    except Exception:
+        raw_payload = text
+    extracted = extract_sms_code_payload(raw_payload)
+    code = extracted.get("code", "")
+    return {
+        "success": True,
+        "found": bool(code),
+        "code": code,
+        "phone": phone,
+        "account_email": account_email,
+        "message": extracted.get("message", "")[:500],
+        "status": status,
+        "checked_at": iso_now(),
+    }
+
+
 def network_error_message(url: str, exc: BaseException) -> str:
     parsed = urllib.parse.urlparse(url)
     host = parsed.hostname or url
@@ -817,7 +971,12 @@ class HostHeaderIMAP4SSL(imaplib.IMAP4_SSL):
 
 def http_json_via_ip_fallback(url: str, *, headers: dict[str, str], timeout: int = 30) -> dict[str, Any]:
     parsed = urllib.parse.urlparse(url)
-    if parsed.scheme != "https" or parsed.hostname != "maip.wsphl.cfd":
+    if (
+        parsed.scheme != "https"
+        or not TEMP_WORKER_DNS_FALLBACK_HOST
+        or parsed.hostname != TEMP_WORKER_DNS_FALLBACK_HOST
+        or not TEMP_WORKER_DNS_FALLBACK_IPS
+    ):
         raise RuntimeError("No IP fallback configured for this host")
     path = parsed.path or "/"
     if parsed.query:
@@ -6843,6 +7002,41 @@ def import_pickup_accounts(payload: dict[str, Any], workspace_id: str = "public"
     }
 
 
+def delete_workspace_mail_credentials(payload: dict[str, Any], workspace_id: str = "public") -> dict[str, Any]:
+    emails = [
+        coerce_text(item).lower()
+        for item in payload.get("emails", [])
+        if "@" in coerce_text(item)
+    ]
+    unique = list(dict.fromkeys(emails))
+    accounts_path = workspace_file(workspace_id, "accounts.json")
+    temp_path = workspace_file(workspace_id, "temp_addresses.json")
+    accounts = load_accounts(accounts_path)
+    addresses = load_temp_addresses(temp_path)
+    deleted_microsoft = 0
+    deleted_temp = 0
+    for email_addr in unique:
+        if accounts.pop(email_addr, None) is not None:
+            deleted_microsoft += 1
+        if addresses.pop(email_addr, None) is not None:
+            deleted_temp += 1
+    if deleted_microsoft:
+        save_accounts(accounts, accounts_path)
+    if deleted_temp:
+        save_temp_addresses(addresses, temp_path)
+    return {
+        "success": True,
+        "emails": unique,
+        "deleted": {
+            "microsoft": deleted_microsoft,
+            "temp": deleted_temp,
+            "total": deleted_microsoft + deleted_temp,
+        },
+        "accounts": [acc.public() for acc in accounts.values()],
+        "addresses": [addr.public() for addr in addresses.values()],
+    }
+
+
 def public_pool_rows_from_payload(payload: dict[str, Any]) -> list[dict[str, Any]]:
     rows = payload.get("items") or payload.get("rows") or payload.get("accounts") or []
     if not isinstance(rows, list):
@@ -7151,6 +7345,26 @@ class Handler(BaseHTTPRequestHandler):
                     "success": False,
                     "error": str(exc)[:500],
                     "error_code": "pickup_import_failed",
+                }, status=HTTPStatus.BAD_REQUEST)
+            return
+        if self.path == "/client-api/accounts/delete":
+            try:
+                self.send_json(delete_workspace_mail_credentials(self.read_json(), self.workspace_id()))
+            except Exception as exc:
+                self.send_json({
+                    "success": False,
+                    "error": str(exc)[:500],
+                    "error_code": "delete_failed",
+                }, status=HTTPStatus.BAD_REQUEST)
+            return
+        if self.path == "/client-api/phone-code/poll":
+            try:
+                self.send_json(poll_phone_code(self.read_json()))
+            except Exception as exc:
+                self.send_json({
+                    "success": False,
+                    "error": str(exc)[:500],
+                    "error_code": "phone_code_fetch_failed",
                 }, status=HTTPStatus.BAD_REQUEST)
             return
         if self.path == "/client-api/cpa/login-start":

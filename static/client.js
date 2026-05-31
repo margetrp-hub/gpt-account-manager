@@ -9,15 +9,8 @@ const STORAGE_KEYS = {
   tempSettings: "ctgptm.mail.tempSettings",
   workspaceId: "ctgptm.workspaceId",
 };
-const DEFAULT_TEMP_WORKER_URL = "https://maip.wsphl.cfd";
-const LEGACY_TEMP_WORKER_URLS = new Set([
-  "maip.ohlaoo.com",
-  "http://maip.ohlaoo.com",
-  "https://maip.ohlaoo.com",
-  "mapi.ohlaoo.com",
-  "http://mapi.ohlaoo.com",
-  "https://mapi.ohlaoo.com",
-]);
+const DEFAULT_TEMP_WORKER_URL = "";
+const LEGACY_TEMP_WORKER_URLS = new Set([]);
 
 const TYPE_LABELS = {
   verification: "验证码",
@@ -1035,7 +1028,7 @@ function isBannedMessage(message) {
     message?.body,
     message?.mail_type_label,
   ].map((value) => String(value || "").toLowerCase()).join(" ");
-  return /\baccess\s+deactivated\b|\baccount\s+(deactivated|disabled|banned|suspended)\b|deleted\s+or\s+deactivated|账号.*(封禁|停用|禁用)|封禁|停用|禁用|灏佺|鍋滅敤|绂佺敤/.test(haystack);
+  return /\baccess\s+deactivated\b|\baccount\s+(deactivated|disabled|banned|suspended)\b|deleted\s+or\s+deactivated|账号.*(封禁|停用|禁用)|封禁|停用|禁用|\u704f\u4f7a\u7ee9|\u934b\u6ec5\u657c\u7528|\u7ec2\u4f7a\u657c\u7528/.test(haystack);
 }
 
 function mailTypeLabel(message) {
