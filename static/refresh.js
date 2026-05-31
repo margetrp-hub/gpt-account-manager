@@ -940,6 +940,7 @@ function accountFetchPayload(account) {
       source: "temp",
       provider: "auto",
       limit: 12,
+      email: account.email,
       emails: [account.email],
       temp_addresses: [{
         email: account.email,
@@ -954,6 +955,7 @@ function accountFetchPayload(account) {
     source: "microsoft",
     provider: "auto",
     limit: 12,
+    email: account.email,
     emails: [account.email],
     accounts: [{
       email: account.email,
