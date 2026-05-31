@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>GPT账号管理助手 - 凭证刷新</title>
-  <link rel="stylesheet" href="/styles.css?v=20260601-phone-otp-channel">
+  <link rel="stylesheet" href="/styles.css?v=20260601-queue-filter-cleanup">
   <link rel="stylesheet" href="/forge-theme.css?v=20260531-open-source-links">
   <script src="/nav-links.js?v=20260531-docker-dns-links" defer></script>
 </head>
@@ -78,6 +78,7 @@
         <div class="panel-actions secondary-actions">
           <button id="sourceSelectAll" type="button">全选</button>
           <button id="addSelected" class="primary" type="button">加入刷新队列</button>
+          <button id="removeSelectedSources" class="ghost danger" type="button">移除所选</button>
         </div>
         <div class="mailbox-pager">
           <select id="sourcePageSize">
@@ -101,7 +102,7 @@
             <div class="login-actions">
               <button id="startSelected" class="primary" type="button">执行选中</button>
               <button id="retryFailed" type="button">重试失败</button>
-              <button id="cleanFailed" class="ghost danger" type="button">清理确定失败</button>
+              <button id="cleanFailed" class="ghost danger" type="button">清理失败</button>
               <button id="exportCpa" type="button">下载 CPA JSON</button>
               <button id="exportSub2" type="button">下载 sub2 JSON</button>
               <button id="clearQueue" class="ghost danger" type="button">清空队列</button>
@@ -184,14 +185,14 @@
               <summary>
                 <span>
                   <strong>长效手机池</strong>
-                  <em>支持批量池与 1 对 1 绑定，收到手机码后可手动填入</em>
+                  <em>批量池 / 1 对 1 绑定</em>
                 </span>
                 <b>接码</b>
               </summary>
               <div class="refresh-config-body phone-pool-panel">
                 <div class="phone-pool-head">
                   <strong>手机号 + 接码 API</strong>
-                  <span>API 可用 {phone}、{email} 占位；批量导入可选绑定邮箱。</span>
+                  <span>{phone} / {email} 可用</span>
                 </div>
                 <div class="phone-mode-tabs" role="tablist" aria-label="手机池模式">
                   <label><input id="phoneModeBatch" name="phonePoolMode" type="radio" value="batch"><span>批量池</span></label>
@@ -211,8 +212,7 @@
                     <strong id="phoneCodeAccount">未选中队列账号</strong>
                     <span id="phoneCodeCurrent">手机验证码：-</span>
                   </div>
-                  <input id="manualPhoneCode" inputmode="numeric" autocomplete="one-time-code" placeholder="手动输入收到的验证码">
-                  <button id="saveManualPhoneCode" type="button">保存验证码</button>
+                  <button id="saveManualPhoneCode" type="button">手动填码</button>
                   <button id="pollSelectedPhone" type="button">为选中账号取码</button>
                 </div>
                 <div id="phonePoolList" class="phone-pool-list">
@@ -222,11 +222,11 @@
             </details>
           </div>
           <div class="login-stats">
-            <span>队列 <strong id="queueTotal">0</strong></span>
-            <span>等待 <strong id="queueIdle">0</strong></span>
-            <span>执行中 <strong id="queueRunning">0</strong></span>
-            <span>成功 <strong id="queueSuccess">0</strong></span>
-            <span>失败 <strong id="queueFailed">0</strong></span>
+            <button type="button" data-queue-filter="all">队列 <strong id="queueTotal">0</strong></button>
+            <button type="button" data-queue-filter="idle">等待 <strong id="queueIdle">0</strong></button>
+            <button type="button" data-queue-filter="running">执行中 <strong id="queueRunning">0</strong></button>
+            <button type="button" data-queue-filter="success">成功 <strong id="queueSuccess">0</strong></button>
+            <button type="button" data-queue-filter="failed">失败 <strong id="queueFailed">0</strong></button>
           </div>
           <div class="queue-progress" id="queueProgress" hidden>
             <span><i style="width: 0%"></i></span>
@@ -266,6 +266,6 @@
     </main>
   </div>
   <div id="toast" class="toast" role="status" aria-live="polite"></div>
-  <script src="/refresh.js?v=20260601-phone-otp-channel" defer></script>
+  <script src="/refresh.js?v=20260601-queue-filter-cleanup" defer></script>
 </body>
 </html>

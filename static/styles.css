@@ -698,7 +698,7 @@ button:disabled {
 }
 
 .refresh-source-panel .secondary-actions {
-  grid-template-columns: 0.55fr 1fr;
+  grid-template-columns: 0.55fr 1fr 0.8fr;
   margin-top: 6px;
 }
 
@@ -961,8 +961,8 @@ button:disabled {
 
 .phone-pool-panel {
   display: grid;
-  gap: 6px;
-  padding: 8px;
+  gap: 5px;
+  padding: 6px 8px 8px;
   border: 0;
   border-radius: 0;
   background: transparent;
@@ -983,7 +983,7 @@ button:disabled {
   justify-content: space-between;
   min-width: 0;
   color: #25405f;
-  font-size: 12px;
+  font-size: 11px;
   font-weight: 850;
 }
 
@@ -999,16 +999,17 @@ button:disabled {
 
 .phone-pool-form {
   display: grid;
-  grid-template-columns: minmax(130px, 0.4fr) minmax(210px, 1fr) auto;
+  grid-template-columns: minmax(120px, 0.42fr) minmax(190px, 1fr) auto;
+  gap: 5px;
 }
 
 .phone-pool-form input {
-  min-height: 30px;
+  min-height: 28px;
 }
 
 .phone-mode-tabs {
   width: fit-content;
-  padding: 3px;
+  padding: 2px;
   border: 1px solid rgba(142, 165, 199, 0.22);
   border-radius: 999px;
   background: rgba(238, 246, 255, 0.74);
@@ -1025,13 +1026,13 @@ button:disabled {
 }
 
 .phone-mode-tabs span {
-  min-height: 24px;
+  min-height: 22px;
   display: inline-flex;
   align-items: center;
-  padding: 0 10px;
+  padding: 0 8px;
   border-radius: 999px;
   color: #526983;
-  font-size: 11px;
+  font-size: 10.5px;
   font-weight: 900;
 }
 
@@ -1044,15 +1045,15 @@ button:disabled {
 .phone-batch-panel {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
-  gap: 6px;
+  gap: 5px;
   align-items: stretch;
 }
 
 .phone-batch-panel textarea {
-  min-height: 58px;
-  max-height: 120px;
-  resize: vertical;
-  padding: 7px 8px;
+  min-height: 36px;
+  max-height: 72px;
+  resize: none;
+  padding: 6px 8px;
   border: 1px solid rgba(142, 165, 199, 0.34);
   border-radius: 7px;
   background: rgba(255, 255, 255, 0.74);
@@ -1062,16 +1063,17 @@ button:disabled {
 }
 
 .phone-batch-panel button {
-  min-height: 58px;
+  min-height: 36px;
   white-space: nowrap;
 }
 
 .phone-code-panel {
   display: grid;
-  grid-template-columns: minmax(180px, 0.72fr) minmax(160px, 1fr) auto auto;
-  padding: 7px;
+  grid-template-columns: minmax(180px, 1fr) auto auto;
+  gap: 5px;
+  padding: 5px;
   border: 1px solid rgba(37, 99, 235, 0.16);
-  border-radius: 8px;
+  border-radius: 7px;
   background: rgba(239, 246, 255, 0.62);
 }
 
@@ -1091,22 +1093,20 @@ button:disabled {
 
 .phone-code-panel strong {
   color: #25405f;
-  font-size: 12px;
+  font-size: 11px;
   font-weight: 900;
 }
 
 .phone-code-panel span {
   color: #64748b;
-  font-size: 11px;
+  font-size: 10.5px;
   font-weight: 800;
 }
 
-.phone-code-panel input {
-  min-height: 30px;
-}
-
 .phone-code-panel button {
-  min-height: 30px;
+  min-height: 28px;
+  padding: 4px 7px;
+  font-size: 11px;
   white-space: nowrap;
 }
 
@@ -1176,17 +1176,16 @@ button:disabled {
 }
 
 .queue-action-stack {
-  display: grid;
+  display: flex;
+  justify-content: flex-end;
   gap: 4px;
+  flex-wrap: wrap;
 }
 
-.queue-action-stack input {
-  width: 72px;
+.queue-action-stack button {
   min-height: 24px;
-  padding: 3px 6px;
-  border-radius: 6px;
+  padding: 3px 7px;
   font-size: 11px;
-  text-align: center;
 }
 
 .refresh-options .toggle {
@@ -1692,11 +1691,25 @@ button:disabled {
   font-weight: 800;
 }
 
-.login-stats span {
+.login-stats span,
+.login-stats button {
   padding: 6px 10px;
   border: 1px solid var(--line);
   border-radius: 999px;
   background: rgba(255, 255, 255, 0.58);
+  color: inherit;
+  font: inherit;
+}
+
+.login-stats button {
+  cursor: pointer;
+}
+
+.login-stats button:hover,
+.login-stats button.active {
+  border-color: rgba(47, 117, 255, 0.34);
+  background: rgba(47, 117, 255, 0.11);
+  color: #315a9d;
 }
 
 .login-stats strong {

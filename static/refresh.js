@@ -43,6 +43,7 @@ const state = {
   queue: normalizedRefreshQueue,
   selectedAccounts: new Set(),
   selectedQueue: new Set(),
+  queueFilter: "all",
   jobs: new Map(),
   poller: undefined,
   phonePool: normalizePhonePool(loadJson(STORAGE_KEYS.phonePool, [])),
@@ -87,12 +88,7 @@ const NON_RETRYABLE_CODES = new Set([
   "unsupported_country_region_territory",
   "openai_turnstile_challenge",
   "request_forbidden",
-]);
-
-const DEFINITIVE_DELETE_CODES = new Set([
-  "account_banned",
-  "account_not_found",
-  "unsupported_country_region_territory",
+  "login_cancelled",
 ]);
 
 const els = {
@@ -107,6 +103,7 @@ const els = {
   sourceNext: document.querySelector("#sourceNext"),
   sourcePageText: document.querySelector("#sourcePageText"),
   sourceList: document.querySelector("#sourceList"),
+  removeSelectedSources: document.querySelector("#removeSelectedSources"),
   startSelected: document.querySelector("#startSelected"),
   retryFailed: document.querySelector("#retryFailed"),
   cleanFailed: document.querySelector("#cleanFailed"),
@@ -148,7 +145,6 @@ const els = {
   importPhoneBatch: document.querySelector("#importPhoneBatch"),
   phoneCodeAccount: document.querySelector("#phoneCodeAccount"),
   phoneCodeCurrent: document.querySelector("#phoneCodeCurrent"),
-  manualPhoneCode: document.querySelector("#manualPhoneCode"),
   saveManualPhoneCode: document.querySelector("#saveManualPhoneCode"),
   pollSelectedPhone: document.querySelector("#pollSelectedPhone"),
   addPhoneEntry: document.querySelector("#addPhoneEntry"),
@@ -338,6 +334,8 @@ const ERROR_MANUAL = {
   phone_pool_api_invalid: "手机 API 格式错误",
   phone_code_missing: "未收到手机验证码",
   phone_code_fetch_failed: "手机取码失败",
+  login_cancelled: "已终止",
+  login_cancel_failed: "终止失败",
   network_incomplete_read: "网络中断",
   login_network_blocked: "网络受限",
   login_failed: "登录失败",
@@ -375,6 +373,7 @@ const LOG_STEP_LABELS = {
   done: "完成",
   success: "完成",
   failed: "失败",
+  cancel: "终止任务",
   browser_queue: "等待浏览器槽位",
   security_check: "等待安全验证",
   login_ready: "登录页就绪",
@@ -904,6 +903,34 @@ function addSelectedToQueue() {
   addLog(`加入刷新队列：${selected.length} 个账号，新增 ${added} 个`, "info");
 }
 
+async function removeSelectedSources() {
+  const selected = state.accounts.filter((account) => state.selectedAccounts.has(account.id));
+  if (!selected.length) {
+    toast("先选择要移除的邮箱");
+    return;
+  }
+  const emails = [...new Set(selected.map((account) => accountEmailKey(account.email)).filter(Boolean))];
+  if (!emails.length) return;
+  if (!confirm(`从本页移除 ${emails.length} 个邮箱？对应取码资料也会从本工作区删除。`)) return;
+  try {
+    await deleteWorkspaceMailCredentials(emails);
+  } catch (error) {
+    const details = error.details || { error: error.message || "邮箱池删除失败", error_code: "delete_failed" };
+    addLog(formatJobError(details), "warning", { error_code: details.error_code || "delete_failed" });
+  }
+  const emailSet = new Set(emails);
+  state.accounts = state.accounts.filter((account) => !emailSet.has(accountEmailKey(account.email)));
+  state.queue = state.queue.filter((row) => !emailSet.has(accountEmailKey(row.email || row.name)));
+  emails.forEach((email) => state.savedRefreshResults.delete(email));
+  selected.forEach((account) => state.selectedAccounts.delete(account.id));
+  state.selectedQueue = new Set([...state.selectedQueue].filter((id) => state.queue.some((row) => row.id === id)));
+  saveJson(STORAGE_KEYS.accounts, state.accounts);
+  saveQueue();
+  renderAll();
+  toast(`已移除 ${emails.length} 个邮箱`);
+  addLog(`移除邮箱：${emails.length} 个`, "success");
+}
+
 function rowState(row) {
   return state.jobs.get(row.id) || {
     status: row.status || "idle",
@@ -923,6 +950,7 @@ function loginLabel(status) {
     success: "成功",
     failed: "失败",
     challenge: "安全验证",
+    canceled: "已终止",
   }[status] || status || "等待";
 }
 
@@ -935,10 +963,27 @@ function formatJobError(job) {
 }
 
 function displayStatus(job) {
+  if (job.status === "failed" && job.error_code === "login_cancelled") {
+    return "canceled";
+  }
   if (job.status === "failed" && job.error_code === "openai_turnstile_challenge") {
     return "challenge";
   }
   return job.status || "idle";
+}
+
+function queueFilterStatus(row) {
+  const status = rowState(row).status || "idle";
+  if (status === "queued") return "idle";
+  return status;
+}
+
+function queueRowsForCurrentFilter() {
+  if (state.queueFilter === "all") return state.queue;
+  if (state.queueFilter === "running") {
+    return state.queue.filter((row) => ["queued", "running"].includes(rowState(row).status || "idle"));
+  }
+  return state.queue.filter((row) => queueFilterStatus(row) === state.queueFilter);
 }
 
 function renderQueueProgress(counts) {
@@ -956,9 +1001,6 @@ function renderQueueProgress(counts) {
 }
 
 function renderQueue() {
-  const activeCodeInput = document.activeElement?.closest?.(".queue-email-code");
-  const activeCodeRowId = activeCodeInput?.closest("tr")?.dataset.id || "";
-  const activeCodeCursor = activeCodeInput ? activeCodeInput.selectionStart : null;
   const counts = { idle: 0, queued: 0, running: 0, success: 0, failed: 0 };
   state.queue.forEach((row) => {
     const status = rowState(row).status || "idle";
@@ -971,19 +1013,35 @@ function renderQueue() {
   els.queueFailed.textContent = String(counts.failed || 0);
   renderQueueProgress(counts);
   if (els.queueSelectAll) {
-    els.queueSelectAll.checked = Boolean(state.queue.length) && state.queue.every((row) => state.selectedQueue.has(row.id));
-    els.queueSelectAll.indeterminate = state.queue.some((row) => state.selectedQueue.has(row.id)) && !els.queueSelectAll.checked;
+    const visibleRows = queueRowsForCurrentFilter();
+    els.queueSelectAll.checked = Boolean(visibleRows.length) && visibleRows.every((row) => state.selectedQueue.has(row.id));
+    els.queueSelectAll.indeterminate = visibleRows.some((row) => state.selectedQueue.has(row.id)) && !els.queueSelectAll.checked;
   }
+  document.querySelectorAll("[data-queue-filter]").forEach((button) => {
+    button.classList.toggle("active", button.dataset.queueFilter === state.queueFilter);
+  });
+  const visibleQueue = queueRowsForCurrentFilter();
   if (!state.queue.length) {
     els.queueBody.innerHTML = '<tr><td colspan="6" class="empty-cell">从左侧选择邮箱加入刷新队列。</td></tr>';
     return;
   }
-  els.queueBody.innerHTML = state.queue.map((row) => {
+  if (!visibleQueue.length) {
+    els.queueBody.innerHTML = '<tr><td colspan="6" class="empty-cell">当前筛选没有账号。</td></tr>';
+    return;
+  }
+  els.queueBody.innerHTML = visibleQueue.map((row) => {
     const job = rowState(row);
     const status = displayStatus(job);
     const rawStatus = job.status || "idle";
     const errorText = formatJobError(job);
     const phoneEntry = phoneEntryForRow(row);
+    const statusText = `${job.error || ""} ${job.error_hint || ""} ${job.logs?.map?.((item) => item.step || item.message || "").join(" ") || ""}`;
+    const canManualCode = ["running", "failed"].includes(rawStatus)
+      && (
+        isCodePickupError(job.error_code || row.error_code, statusText)
+        || isPhoneVerificationError(job.error_code || row.error_code, statusText)
+        || /验证码|接码|waiting_code|manual/i.test(statusText)
+      );
     return `
       <tr data-id="${escapeHtml(row.id)}">
         <td><input class="abnormal-check queue-check" type="checkbox" ${state.selectedQueue.has(row.id) ? "checked" : ""}></td>
@@ -996,24 +1054,14 @@ function renderQueue() {
         <td><div class="login-error" title="${escapeHtml(errorText)}">${escapeHtml(errorText)}</div></td>
         <td>
           <div class="queue-action-stack">
-            <input class="queue-email-code" inputmode="numeric" autocomplete="one-time-code" value="${escapeHtml(row.manual_email_code || "")}" placeholder="邮箱验证码">
-            <button class="login-one" type="button" ${rawStatus === "running" || rawStatus === "queued" ? "disabled" : ""}>${rawStatus === "queued" ? "排队中" : rawStatus === "running" ? "登录中" : "加入队列"}</button>
+            <button class="login-one" type="button" ${["queued", "running"].includes(rawStatus) ? "disabled" : ""}>${rawStatus === "queued" ? "排队中" : rawStatus === "running" ? "执行中" : "执行"}</button>
+            ${canManualCode ? '<button class="code-one" type="button">填码</button>' : ""}
+            ${["queued", "running"].includes(rawStatus) ? '<button class="cancel-one" type="button">终止</button>' : ""}
           </div>
         </td>
       </tr>
     `;
   }).join("");
-  if (activeCodeRowId) {
-    const nextRow = Array.from(els.queueBody.querySelectorAll("tr")).find((row) => row.dataset.id === activeCodeRowId);
-    const nextInput = nextRow?.querySelector(".queue-email-code");
-    if (nextInput) {
-      nextInput.focus();
-      if (activeCodeCursor !== null) {
-        const cursor = Math.min(activeCodeCursor, nextInput.value.length);
-        nextInput.setSelectionRange(cursor, cursor);
-      }
-    }
-  }
 }
 
 function selectedQueueRows({ failedOnly = false } = {}) {
@@ -1051,6 +1099,38 @@ function queuedRows() {
 function selectedSingleQueueRow() {
   const rows = state.queue.filter((row) => state.selectedQueue.has(row.id));
   return rows.length === 1 ? rows[0] : null;
+}
+
+function promptCodeForRow(row) {
+  const current = rowState(row);
+  const phoneNeeded = isPhoneVerificationError(current.error_code || row.error_code, `${current.error || ""} ${current.error_hint || ""}`);
+  const kind = phoneNeeded ? "手机" : "邮箱";
+  const previous = phoneNeeded ? (row.manual_phone_code || row.phone_code || "") : (row.manual_email_code || "");
+  const code = window.prompt(`请输入 ${row.email || row.name || ""} 的${kind}验证码`, previous || "");
+  if (code === null) return;
+  const cleaned = String(code || "").trim();
+  if (!/^\d{4,8}$/.test(cleaned)) {
+    toast(`请输入 4-8 位${kind}验证码`);
+    return;
+  }
+  if (phoneNeeded) {
+    row.manual_phone_code = cleaned;
+    row.phone_code = cleaned;
+    row.phone_code_checked_at = new Date().toISOString();
+    submitManualPhoneCode(row, cleaned).catch((error) => {
+      addLog(`${row.email} 手动手机验证码保存失败`, "warning", {
+        email: row.email,
+        error_code: "manual_phone_code_failed",
+        error: error instanceof Error ? error.message : String(error),
+      });
+    });
+  } else {
+    row.manual_email_code = cleaned;
+    queueManualEmailCodeSubmit(row);
+  }
+  saveQueue();
+  renderQueue();
+  addLog(`${row.email} 已保存${kind}验证码`, "success", { step: phoneNeeded ? "manual_phone_code" : "manual_email_code", email: row.email });
 }
 
 function currentPhoneMode() {
@@ -1161,7 +1241,6 @@ function renderSelectedPhoneCodePanel() {
   if (!row) {
     els.phoneCodeAccount.textContent = "未选中队列账号";
     els.phoneCodeCurrent.textContent = "手机验证码：-";
-    if (els.manualPhoneCode) els.manualPhoneCode.value = "";
     return;
   }
   const entry = phoneEntryForRow(row);
@@ -1169,9 +1248,6 @@ function renderSelectedPhoneCodePanel() {
   const phone = entry?.phone || row.phone_number || "未绑定手机";
   els.phoneCodeAccount.textContent = row.email || row.name || "当前账号";
   els.phoneCodeCurrent.textContent = code ? `手机 ${phone} · 验证码：${code}` : `手机 ${phone} · 验证码：-`;
-  if (els.manualPhoneCode && document.activeElement !== els.manualPhoneCode) {
-    els.manualPhoneCode.value = row.manual_phone_code || "";
-  }
 }
 
 function validPhoneApiUrl(value) {
@@ -1383,11 +1459,13 @@ async function pollPhoneEntry(phoneId, rowId = "") {
 
 function saveManualPhoneCodeForSelected() {
   const row = selectedSingleQueueRow();
-  const code = els.manualPhoneCode ? els.manualPhoneCode.value.trim() : "";
   if (!row) {
     toast("请先只选中一个队列账号");
     return;
   }
+  const input = window.prompt(`请输入 ${row.email || row.name || ""} 的手机验证码`, row.manual_phone_code || row.phone_code || "");
+  if (input === null) return;
+  const code = String(input || "").trim();
   if (!/^\d{4,8}$/.test(code)) {
     toast("请输入 4-8 位手机验证码");
     return;
@@ -1429,15 +1507,12 @@ async function pollSelectedPhoneCode() {
   await pollPhoneEntry(entry.id, row.id);
 }
 
-function definitiveFailedRows() {
+function failedRowsForCleanup() {
   const base = state.selectedQueue.size
     ? state.queue.filter((row) => state.selectedQueue.has(row.id))
-    : state.queue;
-  return base.filter((row) => {
-    const job = rowState(row);
-    if (job.status !== "failed") return false;
-    return DEFINITIVE_DELETE_CODES.has(inferErrorCode(job));
-  });
+    : queueRowsForCurrentFilter();
+  const scoped = base.length ? base : state.queue;
+  return scoped.filter((row) => rowState(row).status === "failed");
 }
 
 function cpaDeleteGroups(rows) {
@@ -1496,11 +1571,11 @@ async function deleteWorkspaceMailCredentials(emails) {
   return data.deleted || { microsoft: 0, temp: 0 };
 }
 
-async function cleanDefinitiveFailures() {
-  const rows = definitiveFailedRows();
+async function cleanFailedRows() {
+  const rows = failedRowsForCleanup();
   if (!rows.length) {
-    toast("没有可清理的确定失败账号");
-    addLog("没有可清理的确定失败账号", "warning");
+    toast("没有可清理的失败账号");
+    addLog("没有可清理的失败账号", "warning");
     return;
   }
   const counts = rows.reduce((acc, row) => {
@@ -1509,7 +1584,8 @@ async function cleanDefinitiveFailures() {
     return acc;
   }, {});
   const summary = Object.entries(counts).map(([code, count]) => `${errorCodeLabel(code)} ${count}`).join("，");
-  if (!confirm(`将清理 ${rows.length} 个确定失败账号：${summary}\n\n会尝试从 CPA 删除，并从本地邮箱池和刷新队列移除。继续？`)) {
+  const selectedHint = state.selectedQueue.size ? "选中的失败账号" : (state.queueFilter === "failed" ? "当前失败列表" : "全部失败账号");
+  if (!confirm(`将清理 ${rows.length} 个${selectedHint}：${summary}\n\n会尝试从 CPA 删除，并从本地邮箱池和刷新队列移除。继续？`)) {
     return;
   }
   const emails = [...new Set(rows.map((row) => accountEmailKey(row.email || row.name)).filter(Boolean))];
@@ -1539,7 +1615,7 @@ async function cleanDefinitiveFailures() {
   saveQueue();
   renderAll();
   addLog(`清理完成：队列 ${rows.length}，CPA ${cpaDeleted}，邮箱池 Outlook ${workspaceDeleted.microsoft || 0} / 临时 ${workspaceDeleted.temp || 0}`, "success");
-  toast(`已清理 ${rows.length} 个确定失败账号`);
+  toast(`已清理 ${rows.length} 个失败账号`);
 }
 
 function accountForRow(row) {
@@ -1707,6 +1783,33 @@ async function submitManualPhoneCode(row, code) {
     const details = parseErrorPayload(data, "手动手机验证码保存失败");
     throw new Error(details.error || "手动手机验证码保存失败");
   }
+}
+
+async function cancelLoginJob(row) {
+  const current = rowState(row);
+  const jobId = row.jobId || current.jobId || "";
+  if (!jobId) {
+    row.status = "failed";
+    row.error = "任务已终止";
+    row.error_code = "login_cancelled";
+    state.jobs.set(row.id, { ...current, status: "failed", error: row.error, error_code: row.error_code, retryable: false });
+    saveQueue();
+    renderQueue();
+    return;
+  }
+  const response = await fetch("/client-api/cpa/login-cancel", {
+    method: "POST",
+    headers: apiHeaders(),
+    body: JSON.stringify({ job_id: jobId }),
+  });
+  const data = await readJsonResponse(response, "终止失败");
+  if (!data.success) {
+    const details = parseErrorPayload(data, "终止失败");
+    throw new Error(details.error || "终止失败");
+  }
+  applyJobToRow(row, data.job || {}, current);
+  addLog(`${row.email} 任务已终止`, "warning", { step: "cancel", email: row.email });
+  renderAll();
 }
 
 function addLog(message, type = "info", meta = {}) {
@@ -2467,11 +2570,20 @@ async function syncAccountsFromServer({ quiet = false } = {}) {
     ]);
     if (!accountsResponse.ok) throw new Error(accountsData.error || accountsResponse.statusText || "Failed to load Outlook accounts");
     if (!tempResponse.ok) throw new Error(tempData.error || tempResponse.statusText || "Failed to load temp accounts");
+    const serverManagedBeforeIds = new Set(
+      state.accounts
+        .filter((account) => ["microsoft", "temp"].includes(account.source))
+        .map((account) => account.id)
+    );
     const syncedAccounts = [
       ...((accountsData.accounts || []).map((item) => normalizeServerAccount(item, "microsoft")).filter(Boolean)),
       ...((tempData.addresses || []).map((item) => normalizeServerAccount(item, "temp")).filter(Boolean)),
     ];
     mergeServerAccountsSnapshot(syncedAccounts);
+    if (syncedAccounts.length || serverManagedBeforeIds.size) {
+      const serverIds = new Set(syncedAccounts.map((account) => account.id));
+      state.accounts = state.accounts.filter((account) => !serverManagedBeforeIds.has(account.id) || serverIds.has(account.id));
+    }
     saveJson(STORAGE_KEYS.accounts, state.accounts);
     renderAll();
   } catch (error) {
@@ -2495,6 +2607,9 @@ els.sourceSelectAll.addEventListener("click", () => {
   renderSources();
 });
 els.addSelected.addEventListener("click", addSelectedToQueue);
+if (els.removeSelectedSources) {
+  els.removeSelectedSources.addEventListener("click", removeSelectedSources);
+}
 els.sourcePrev.addEventListener("click", () => {
   state.sourcePage -= 1;
   renderSources();
@@ -2523,27 +2638,36 @@ els.queueBody.addEventListener("change", (event) => {
   renderQueue();
   renderSelectedPhoneCodePanel();
 });
-els.queueBody.addEventListener("input", (event) => {
-  const input = event.target.closest(".queue-email-code");
-  if (!input) return;
-  const rowEl = input.closest("tr");
-  const item = state.queue.find((row) => row.id === rowEl?.dataset.id);
-  if (!item) return;
-  item.manual_email_code = input.value.trim();
-  saveQueue();
-  queueManualEmailCodeSubmit(item);
-});
 if (els.queueSelectAll) {
   els.queueSelectAll.addEventListener("change", () => {
+    const visibleRows = queueRowsForCurrentFilter();
     if (els.queueSelectAll.checked) {
-      state.queue.forEach((row) => state.selectedQueue.add(row.id));
+      visibleRows.forEach((row) => state.selectedQueue.add(row.id));
     } else {
-      state.selectedQueue.clear();
+      visibleRows.forEach((row) => state.selectedQueue.delete(row.id));
     }
     renderQueue();
   });
 }
 els.queueBody.addEventListener("click", (event) => {
+  const codeButton = event.target.closest(".code-one");
+  if (codeButton) {
+    const rowEl = codeButton.closest("tr");
+    const item = state.queue.find((row) => row.id === rowEl?.dataset.id);
+    if (item) promptCodeForRow(item);
+    return;
+  }
+  const cancelButton = event.target.closest(".cancel-one");
+  if (cancelButton) {
+    const rowEl = cancelButton.closest("tr");
+    const item = state.queue.find((row) => row.id === rowEl?.dataset.id);
+    if (item) {
+      cancelLoginJob(item).catch((error) => {
+        addLog(`${item.email} 终止失败：${error.message || "unknown"}`, "error", { error_code: "login_cancel_failed", email: item.email });
+      });
+    }
+    return;
+  }
   const button = event.target.closest(".login-one");
   if (!button) return;
   const rowEl = button.closest("tr");
@@ -2558,8 +2682,16 @@ els.queueBody.addEventListener("click", (event) => {
 els.startSelected.addEventListener("click", () => startRows(selectedQueueRows()));
 els.retryFailed.addEventListener("click", () => startRows(selectedQueueRows({ failedOnly: true })));
 if (els.cleanFailed) {
-  els.cleanFailed.addEventListener("click", cleanDefinitiveFailures);
+  els.cleanFailed.addEventListener("click", cleanFailedRows);
 }
+document.querySelectorAll("[data-queue-filter]").forEach((button) => {
+  button.addEventListener("click", () => {
+    state.queueFilter = button.dataset.queueFilter || "all";
+    state.selectedQueue.clear();
+    renderQueue();
+    renderSelectedPhoneCodePanel();
+  });
+});
 els.exportCpa.addEventListener("click", () => exportResults("cpa"));
 els.exportSub2.addEventListener("click", () => exportResults("sub2"));
 if (els.syncTempCredentials) {

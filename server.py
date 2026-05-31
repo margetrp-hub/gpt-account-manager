@@ -72,7 +72,7 @@ LOGIN_HISTORY_FILE = DATA_DIR / "login_history.json"
 LOGIN_DEBUG_DIR = DATA_DIR / "login_debug"
 UPGRADE_REQUEST_FILE = DATA_DIR / "upgrade_request.json"
 UPGRADE_RESULT_FILE = DATA_DIR / "upgrade_result.json"
-APP_VERSION = "20260601-phone-otp-channel"
+APP_VERSION = "20260601-queue-filter-cleanup"
 
 DEFAULT_HOST = os.environ.get("MAIL_PICKUP_HOST", "127.0.0.1")
 DEFAULT_PORT = int(os.environ.get("MAIL_PICKUP_PORT", "8765"))
@@ -3875,6 +3875,7 @@ class ChatGPTProtocolLogin:
             self.log("phone_pool", f"按手机号匹配长效手机尾号 {normalize_phone_digits(phone)[-4:]}", "info")
         since = str(int(time.time()))
         for attempt in range(1, max(1, attempts) + 1):
+            raise_if_login_job_cancelled(self.job_id)
             manual_code = manual_phone_code_for_payload(self.payload)
             if manual_code:
                 self.log("manual_phone_code", "使用手动填写的手机验证码", "info")
@@ -5951,6 +5952,49 @@ def set_login_job_status(job_id: str, status: str, **updates: Any) -> None:
                 pass
 
 
+def login_job_cancel_requested(job_id: str) -> bool:
+    if not job_id:
+        return False
+    with LOGIN_JOBS_LOCK:
+        job = LOGIN_JOBS.get(job_id)
+        return bool(job and job.get("cancel_requested"))
+
+
+def raise_if_login_job_cancelled(job_id: str) -> None:
+    if login_job_cancel_requested(job_id):
+        raise LoginFlowError(
+            "任务已终止",
+            code="login_cancelled",
+            hint="用户已手动终止这个刷新任务。",
+            retryable=False,
+        )
+
+
+def cancel_login_job(payload: dict[str, Any], workspace_id: str = "public") -> dict[str, Any]:
+    job_id = coerce_text(payload.get("job_id") or payload.get("jobId"))
+    if not job_id:
+        raise RuntimeError("登录任务不存在")
+    expected_workspace = normalize_workspace_id(workspace_id)
+    with LOGIN_JOBS_LOCK:
+        job = LOGIN_JOBS.get(job_id)
+        if not job:
+            raise RuntimeError("登录任务不存在")
+        job_workspace = normalize_workspace_id(job.get("workspace_id"))
+        if expected_workspace and job_workspace != expected_workspace:
+            raise RuntimeError("登录任务不属于当前工作区")
+        job["cancel_requested"] = True
+        job["updated_at"] = iso_now()
+        if job.get("status") in {"queued", "running"}:
+            job["status"] = "failed"
+            job["error"] = "任务已终止"
+            job["error_code"] = "login_cancelled"
+            job["error_hint"] = "用户已手动终止这个刷新任务。"
+            job["retryable"] = False
+            job["finished_at"] = job["updated_at"]
+    append_login_log(job_id, "任务已终止", "warning", "cancel")
+    return {"success": True, "job": login_job_public(LOGIN_JOBS.get(job_id, {}))}
+
+
 def clean_manual_email_code(value: Any) -> str:
     code = coerce_text(value)
     return code if re.fullmatch(r"\d{4,8}", code) else ""
@@ -6019,6 +6063,7 @@ def fetch_login_verification_code(payload: dict[str, Any], *, since: float = 0, 
     total_attempts = max(1, attempts)
     last_summary = ""
     for attempt in range(1, total_attempts + 1):
+        raise_if_login_job_cancelled(job_id)
         manual_code = manual_email_code_for_payload(payload)
         if manual_code:
             if job_id:
@@ -8180,6 +8225,16 @@ class Handler(BaseHTTPRequestHandler):
                     "success": False,
                     "error": str(exc)[:500],
                     "error_code": "manual_phone_code_failed",
+                }, status=HTTPStatus.BAD_REQUEST)
+            return
+        if self.path == "/client-api/cpa/login-cancel":
+            try:
+                self.send_json(cancel_login_job(self.read_json(), self.workspace_id()))
+            except Exception as exc:
+                self.send_json({
+                    "success": False,
+                    "error": str(exc)[:500],
+                    "error_code": "login_cancel_failed",
                 }, status=HTTPStatus.BAD_REQUEST)
             return
         if self.path == "/client-api/cpa/login-start":
