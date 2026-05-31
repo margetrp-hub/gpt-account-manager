@@ -1,0 +1,51 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  github-release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Build source archive
+        run: |
+          git archive --format=zip --output="gpt-account-manager-${GITHUB_REF_NAME}.zip" HEAD
+
+      - name: Create release notes
+        run: |
+          cat > release-notes.md <<'EOF'
+## GPT账号管理助手
+
+本次发布重点：
+
+- 新增并打磨独立邮箱管理页。
+- 导入类型只显示邮箱名称：自动识别、Outlook 邮箱、临时邮箱。
+- 权限类型显示为 JWT、微软 OAuth、微软 OAuth+密码。
+- 移除异常主分类，异常邮箱只在邮箱名旁标红“（错误）”。
+- 左侧邮箱管家区域改为浅色高对比，避免看不清。
+
+部署方式仍然推荐 Docker Compose：
+
+```bash
+git pull --ff-only origin main
+docker compose up -d --build --force-recreate
+```
+          EOF
+
+      - name: Publish GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "${GITHUB_REF_NAME}" \
+            --title "${GITHUB_REF_NAME}" \
+            --notes-file release-notes.md \
+            --latest \
+            "gpt-account-manager-${GITHUB_REF_NAME}.zip"
