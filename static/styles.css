@@ -2281,6 +2281,26 @@ label span {
   grid-column: 1 / -1;
 }
 
+.upgrade-panel {
+  grid-column: 1 / -1;
+}
+
+.upgrade-copy {
+  margin: 0 0 10px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 800;
+  line-height: 1.45;
+}
+
+.upgrade-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.upgrade-panel pre,
 .health-raw pre {
   max-height: 360px;
   overflow: auto;

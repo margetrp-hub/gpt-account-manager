@@ -1,0 +1,10 @@
+[Unit]
+Description=Run GPT Account Manager upgrade agent every minute
+
+[Timer]
+OnBootSec=1min
+OnUnitActiveSec=1min
+Unit=gpt-account-manager-upgrade-agent.service
+
+[Install]
+WantedBy=timers.target

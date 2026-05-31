@@ -59,6 +59,19 @@
         <div id="dataGrid" class="health-kv"></div>
       </section>
 
+      <section class="panel upgrade-panel">
+        <div class="section-head">
+          <h2>同步升级</h2>
+          <span id="upgradeBadge">等待检测</span>
+        </div>
+        <p class="upgrade-copy">点击后会写入升级请求；宿主机 upgrade agent 会执行 git pull、重建 Docker 并重启服务。</p>
+        <div class="upgrade-actions">
+          <button id="checkUpgrade" type="button">刷新状态</button>
+          <button id="requestUpgrade" class="primary" type="button">请求升级并重启</button>
+        </div>
+        <pre id="upgradeStatus">{}</pre>
+      </section>
+
       <section class="panel health-raw">
         <div class="section-head">
           <h2>原始 JSON</h2>
@@ -79,6 +92,10 @@
       data: document.querySelector("#dataGrid"),
       raw: document.querySelector("#rawHealth"),
       reload: document.querySelector("#reloadHealth"),
+      upgradeBadge: document.querySelector("#upgradeBadge"),
+      upgradeStatus: document.querySelector("#upgradeStatus"),
+      checkUpgrade: document.querySelector("#checkUpgrade"),
+      requestUpgrade: document.querySelector("#requestUpgrade"),
     };
 
     function escapeHtml(value) {
@@ -130,6 +147,31 @@
         ["邮件缓存", payload.data_counts?.messages],
         ["数据目录", payload.paths?.data],
       ]);
+      await loadUpgradeStatus();
+    }
+
+    function renderUpgrade(payload) {
+      const request = payload.request || {};
+      const result = payload.result || {};
+      const status = result.status || request.status || "idle";
+      els.upgradeBadge.textContent = status === "success"
+        ? "已升级"
+        : status === "requested"
+          ? "已请求"
+          : status === "running"
+            ? "升级中"
+            : status === "failed"
+              ? "失败"
+              : status === "no_update"
+                ? "已是最新"
+                : "待命";
+      els.upgradeStatus.textContent = JSON.stringify(payload, null, 2);
+    }
+
+    async function loadUpgradeStatus() {
+      const payload = await readJsonEndpoint("/admin-api/upgrade/status");
+      renderUpgrade(payload);
+      return payload;
     }
 
     function healthAuthHeaders() {
@@ -150,6 +192,46 @@
       }
       return JSON.parse(text || "{}");
     }
+
+    async function postJsonEndpoint(path, payload = {}) {
+      const response = await fetch(path, {
+        method: "POST",
+        cache: "no-store",
+        headers: {
+          ...healthAuthHeaders(),
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(payload),
+      });
+      const text = await response.text();
+      if (!response.ok) {
+        throw new Error(text.replace(/\s+/g, " ").slice(0, 220) || response.statusText);
+      }
+      return JSON.parse(text || "{}");
+    }
+
+    els.checkUpgrade.addEventListener("click", () => loadUpgradeStatus().catch((error) => {
+      els.upgradeBadge.textContent = "检测失败";
+      els.upgradeStatus.textContent = error.message || "无法读取升级状态";
+    }));
+
+    els.requestUpgrade.addEventListener("click", async () => {
+      if (!confirm("确认请求升级并重启？升级 agent 会在宿主机执行 git pull 和 docker compose 重建。")) return;
+      els.requestUpgrade.disabled = true;
+      els.requestUpgrade.textContent = "已提交";
+      try {
+        const payload = await postJsonEndpoint("/admin-api/upgrade/request", { target: "origin/main" });
+        renderUpgrade(payload.status || payload);
+      } catch (error) {
+        els.upgradeBadge.textContent = "提交失败";
+        els.upgradeStatus.textContent = error.message || "升级请求失败";
+      } finally {
+        setTimeout(() => {
+          els.requestUpgrade.disabled = false;
+          els.requestUpgrade.textContent = "请求升级并重启";
+        }, 1600);
+      }
+    });
 
     els.reload.addEventListener("click", () => loadHealth().catch((error) => {
       els.title.textContent = "检测失败";

@@ -82,6 +82,14 @@ docker compose up -d --build
 sudo bash deploy/migrate-systemd-to-docker.sh
 ```
 
+需要网页里点击升级时，启用宿主机升级 agent：
+
+```bash
+sudo cp deploy/gpt-account-manager-upgrade-agent.* /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now gpt-account-manager-upgrade-agent.timer
+```
+
 打开：
 
 ```text

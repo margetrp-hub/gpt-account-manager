@@ -70,7 +70,9 @@ TEMP_ADDRESSES_FILE = DATA_DIR / "temp_addresses.json"
 REFRESH_RESULTS_FILE = DATA_DIR / "refresh_results.json"
 LOGIN_HISTORY_FILE = DATA_DIR / "login_history.json"
 LOGIN_DEBUG_DIR = DATA_DIR / "login_debug"
-APP_VERSION = "20260531-docker-dns-links"
+UPGRADE_REQUEST_FILE = DATA_DIR / "upgrade_request.json"
+UPGRADE_RESULT_FILE = DATA_DIR / "upgrade_result.json"
+APP_VERSION = "20260531-upgrade-agent"
 
 DEFAULT_HOST = os.environ.get("MAIL_PICKUP_HOST", "127.0.0.1")
 DEFAULT_PORT = int(os.environ.get("MAIL_PICKUP_PORT", "8765"))
@@ -269,6 +271,20 @@ def file_item_count(path: Path, key: str) -> int:
     return len(value) if isinstance(value, list) else 0
 
 
+def load_json_file(path: Path, fallback: Any) -> Any:
+    if not path.exists():
+        return fallback
+    try:
+        return json.loads(path.read_text(encoding="utf-8-sig"))
+    except Exception:
+        return fallback
+
+
+def write_json_file(path: Path, payload: Any) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
 WORKSPACE_ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{5,63}$")
 
 
@@ -348,6 +364,51 @@ def public_top_links() -> list[dict[str, str]]:
         if normalized:
             links.append({"label": label, "url": normalized})
     return links
+
+
+def upgrade_status_payload() -> dict[str, Any]:
+    request = load_json_file(UPGRADE_REQUEST_FILE, {})
+    result = load_json_file(UPGRADE_RESULT_FILE, {})
+    return {
+        "success": True,
+        "version": APP_VERSION,
+        "request_file": str(UPGRADE_REQUEST_FILE),
+        "result_file": str(UPGRADE_RESULT_FILE),
+        "agent": {
+            "mode": "host-timer",
+            "enabled_by": "deploy/gpt-account-manager-upgrade-agent.timer",
+        },
+        "request": request if isinstance(request, dict) else {},
+        "result": result if isinstance(result, dict) else {},
+    }
+
+
+def create_upgrade_request(payload: dict[str, Any] | None = None) -> dict[str, Any]:
+    now = iso_now()
+    request_id = f"upgrade-{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')}-{secrets.token_hex(4)}"
+    existing = load_json_file(UPGRADE_REQUEST_FILE, {})
+    if isinstance(existing, dict) and existing.get("status") in {"requested", "running"}:
+        return {
+            "success": True,
+            "already_pending": True,
+            "request": existing,
+            "status": upgrade_status_payload(),
+        }
+    request = {
+        "id": request_id,
+        "status": "requested",
+        "requested_at": now,
+        "current_version": APP_VERSION,
+        "target": coerce_text((payload or {}).get("target") or "origin/main"),
+        "note": "host upgrade agent will run git pull and docker compose rebuild",
+    }
+    write_json_file(UPGRADE_REQUEST_FILE, request)
+    return {
+        "success": True,
+        "already_pending": False,
+        "request": request,
+        "status": upgrade_status_payload(),
+    }
 
 
 def load_accounts(path: Path = ACCOUNTS_FILE) -> dict[str, MailAccount]:
@@ -7146,6 +7207,13 @@ class Handler(BaseHTTPRequestHandler):
                 return
             self.send_json(network_health_payload())
             return
+        if request_path == "/admin-api/upgrade/status":
+            try:
+                self.require_auth()
+            except ConnectionAbortedError:
+                return
+            self.send_json(upgrade_status_payload())
+            return
         if request_path.lower() == "/health.html":
             try:
                 self.require_admin_page_auth()
@@ -7440,6 +7508,12 @@ class Handler(BaseHTTPRequestHandler):
                     self.send_json(push_public_pool(self.read_json()))
                 except Exception as exc:
                     self.send_json({"error": str(exc)[:500]}, status=HTTPStatus.BAD_REQUEST)
+                return
+            if self.path == "/admin-api/upgrade/request":
+                try:
+                    self.send_json(create_upgrade_request(self.read_json()))
+                except Exception as exc:
+                    self.send_json({"success": False, "error": str(exc)[:500]}, status=HTTPStatus.BAD_REQUEST)
                 return
             self.send_error(HTTPStatus.NOT_FOUND)
             return

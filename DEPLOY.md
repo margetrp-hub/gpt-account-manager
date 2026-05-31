@@ -101,6 +101,40 @@ GPT_ACCOUNT_MANAGER_PUBLIC_POOL_URL=https://your-public-pool.example
 
 开源默认不填这些值，所以页面顶部不会显示这些外链。
 
+### 启用点击升级
+
+如果希望在 `/health.html` 里点击“请求升级并重启”，需要在宿主机启用升级 agent。这个 agent 不跑在 Web 容器里，只读取 `data/upgrade_request.json`，然后在宿主机执行固定的升级流程：
+
+```bash
+cd /opt/gpt-account-manager
+sudo cp deploy/gpt-account-manager-upgrade-agent.service /etc/systemd/system/
+sudo cp deploy/gpt-account-manager-upgrade-agent.timer /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now gpt-account-manager-upgrade-agent.timer
+```
+
+以后管理员打开：
+
+```text
+https://你的域名/health.html
+```
+
+点击“请求升级并重启”后，timer 会在 1 分钟内执行：
+
+```bash
+git fetch origin main
+git pull --ff-only origin main
+docker compose up -d --build --force-recreate
+docker image prune -f
+docker builder prune -f
+```
+
+查看升级 agent 日志：
+
+```bash
+sudo journalctl -u gpt-account-manager-upgrade-agent -n 120 --no-pager
+```
+
 ### 从旧 systemd 部署迁移到 Docker
 
 如果你的云端已经按旧方式跑在 `/opt/ctgptm-mail-assistant`，可以用迁移脚本平移到 Docker。它会做这些事：

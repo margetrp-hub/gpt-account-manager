@@ -1,0 +1,9 @@
+[Unit]
+Description=GPT Account Manager upgrade agent
+After=docker.service network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=/opt/gpt-account-manager
+ExecStart=/bin/bash /opt/gpt-account-manager/deploy/upgrade-agent.sh
