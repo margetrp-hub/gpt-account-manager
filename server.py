@@ -72,7 +72,7 @@ LOGIN_HISTORY_FILE = DATA_DIR / "login_history.json"
 LOGIN_DEBUG_DIR = DATA_DIR / "login_debug"
 UPGRADE_REQUEST_FILE = DATA_DIR / "upgrade_request.json"
 UPGRADE_RESULT_FILE = DATA_DIR / "upgrade_result.json"
-APP_VERSION = "20260601-final"
+APP_VERSION = "20260601-outlook-scroll"
 
 DEFAULT_HOST = os.environ.get("MAIL_PICKUP_HOST", "127.0.0.1")
 DEFAULT_PORT = int(os.environ.get("MAIL_PICKUP_PORT", "8765"))
@@ -1349,28 +1349,48 @@ def get_graph_token(account: MailAccount) -> str:
     raise RuntimeError(f"Graph token failed: {last_error}")
 
 
+def refresh_microsoft_access_token(
+    account: MailAccount,
+    attempts: list[tuple[str, dict[str, str]]],
+    label: str,
+) -> str:
+    last_error = ""
+    for url, data in attempts:
+        try:
+            payload = http_json(url, method="POST", data=data)
+            token = payload.get("access_token")
+            if token:
+                return token
+            last_error = str(payload)
+        except Exception as exc:
+            last_error = str(exc)
+    raise RuntimeError(f"{label} token failed: {last_error}")
+
+
 def get_imap_token(account: MailAccount) -> tuple[str, str]:
     attempts = [
-        ("https://login.microsoftonline.com/consumers/oauth2/v2.0/token", {
-            "client_id": account.client_id,
-            "grant_type": "refresh_token",
-            "refresh_token": account.refresh_token,
-            "scope": "https://outlook.office.com/IMAP.AccessAsUser.All offline_access",
-        }, "outlook.live.com"),
         ("https://login.live.com/oauth20_token.srf", {
             "client_id": account.client_id,
             "grant_type": "refresh_token",
             "refresh_token": account.refresh_token,
         }, "outlook.office365.com"),
+        ("https://login.microsoftonline.com/consumers/oauth2/v2.0/token", {
+            "client_id": account.client_id,
+            "grant_type": "refresh_token",
+            "refresh_token": account.refresh_token,
+            "scope": "offline_access https://graph.microsoft.com/Mail.Read https://graph.microsoft.com/User.Read",
+        }, "outlook.live.com"),
+        ("https://login.microsoftonline.com/common/oauth2/v2.0/token", {
+            "client_id": account.client_id,
+            "grant_type": "refresh_token",
+            "refresh_token": account.refresh_token,
+            "scope": "offline_access https://graph.microsoft.com/Mail.Read https://graph.microsoft.com/User.Read",
+        }, "outlook.office365.com"),
     ]
     last_error = ""
     for url, data, server in attempts:
         try:
-            payload = http_json(url, method="POST", data=data)
-            token = payload.get("access_token")
-            if token:
-                return token, server
-            last_error = str(payload)
+            return refresh_microsoft_access_token(account, [(url, data)], "IMAP"), server
         except Exception as exc:
             last_error = str(exc)
     raise RuntimeError(f"IMAP token failed: {last_error}")
@@ -1416,6 +1436,64 @@ def fetch_graph_messages(account: MailAccount, *, limit: int, sender_filter: str
                 body=body,
                 received_at=item.get("receivedDateTime", ""),
                 web_link=item.get("webLink", ""),
+            ))
+    return messages[:limit]
+
+
+def fetch_outlook_api_messages(account: MailAccount, *, limit: int, sender_filter: str = "") -> list[dict[str, Any]]:
+    token = refresh_microsoft_access_token(account, [
+        ("https://login.microsoftonline.com/common/oauth2/v2.0/token", {
+            "client_id": account.client_id,
+            "grant_type": "refresh_token",
+            "refresh_token": account.refresh_token,
+        }),
+        ("https://login.microsoftonline.com/common/oauth2/v2.0/token", {
+            "client_id": account.client_id,
+            "grant_type": "refresh_token",
+            "refresh_token": account.refresh_token,
+            "scope": "offline_access https://graph.microsoft.com/Mail.Read https://graph.microsoft.com/User.Read",
+        }),
+    ], "Outlook API")
+    messages: list[dict[str, Any]] = []
+    for folder in GRAPH_FOLDERS:
+        params = urllib.parse.urlencode({
+            "$select": "Id,Subject,BodyPreview,From,ReceivedDateTime,WebLink",
+            "$orderby": "ReceivedDateTime desc",
+            "$top": str(max(limit, 1)),
+        })
+        url = f"https://outlook.office.com/api/v2.0/me/mailfolders/{folder}/messages?{params}"
+        req = urllib.request.Request(url, headers={
+            "Authorization": f"Bearer {token}",
+            "Accept": "application/json",
+        })
+        try:
+            with urlopen_with_dns_retry(req, timeout=30) as resp:
+                payload = json.loads(resp.read().decode("utf-8"))
+        except urllib.error.HTTPError as exc:
+            if exc.code == 404 and folder == "junkemail":
+                continue
+            text = exc.read().decode("utf-8", errors="ignore")
+            raise RuntimeError(f"Outlook API fetch failed: {exc.code} {text[:220]}") from exc
+        except urllib.error.URLError as exc:
+            raise RuntimeError(network_error_message(url, exc)) from exc
+        for item in payload.get("value", []):
+            sender_info = item.get("From") or item.get("from") or {}
+            sender_addr = sender_info.get("EmailAddress") or sender_info.get("emailAddress") or {}
+            sender = sender_addr.get("Address") or sender_addr.get("address") or ""
+            subject = item.get("Subject") or item.get("subject") or ""
+            body = item.get("BodyPreview") or item.get("bodyPreview") or ""
+            if sender_filter and sender_filter.lower() not in f"{sender} {subject} {body}".lower():
+                continue
+            messages.append(normalize_message(
+                account=account.email,
+                provider="outlook",
+                folder=folder,
+                mid=item.get("Id") or item.get("id") or "",
+                sender=sender,
+                subject=subject,
+                body=body,
+                received_at=item.get("ReceivedDateTime") or item.get("receivedDateTime") or "",
+                web_link=item.get("WebLink") or item.get("webLink") or "",
             ))
     return messages[:limit]
 
@@ -1951,13 +2029,15 @@ def fetch_for_account(account: MailAccount, provider: str, limit: int, sender_fi
     messages: list[dict[str, Any]] = []
     checked_at = iso_now()
     used_provider = ""
-    providers = ["graph", "imap"] if provider == "auto" else [provider]
+    providers = ["imap", "graph", "outlook"] if provider == "auto" else [provider]
     for current in providers:
         try:
             if current == "graph":
                 messages = fetch_graph_messages(account, limit=limit, sender_filter=sender_filter)
             elif current == "imap":
                 messages = fetch_imap_messages(account, limit=limit, sender_filter=sender_filter)
+            elif current == "outlook":
+                messages = fetch_outlook_api_messages(account, limit=limit, sender_filter=sender_filter)
             else:
                 raise RuntimeError(f"Unsupported provider: {current}")
             account.last_status = "ok"

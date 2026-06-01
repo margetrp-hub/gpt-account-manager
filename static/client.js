@@ -328,6 +328,15 @@ function shouldUseServerStoredAccounts(payload) {
     && !selectedAccounts.some(hasUsableLocalCredential);
 }
 
+function normalizeProviderValue(value) {
+  const provider = String(value || "auto").toLowerCase();
+  return ["auto", "graph", "imap"].includes(provider) ? provider : "auto";
+}
+
+if (els.providerFilter) {
+  els.providerFilter.value = normalizeProviderValue(els.providerFilter.value);
+}
+
 function clientPayloadForSync(payload) {
   return {
     ...payload,
@@ -2384,6 +2393,10 @@ async function syncMail() {
     return;
   }
   const useServerStoredAccounts = shouldUseServerStoredAccounts(payload);
+  const provider = normalizeProviderValue(els.providerFilter?.value);
+  if (els.providerFilter && provider !== "auto") {
+    addClientLog(`当前选择 ${provider === "graph" ? "Graph" : "IMAP"} 单一路径；如果失败，请切回“微软自动”。`, "warning");
+  }
   if (payloadHasMaskedCredentials(payload) && !useServerStoredAccounts && !hasUsableLocalCredentialsForPayload(payload)) {
     toast(localCredentialHint());
     els.statusText.textContent = "当前浏览器没有真实凭证";
@@ -2396,8 +2409,9 @@ async function syncMail() {
   try {
     const endpoint = useServerStoredAccounts ? "/api/fetch" : "/client-api/fetch";
     const requestPayload = useServerStoredAccounts ? serverPayloadForSync() : clientPayloadForSync(payload);
+    requestPayload.provider = provider;
     setInlineProgress(els.mailProgress, 35, "请求中");
-    addClientLog(`刷新请求：${requestPayload.accounts?.length || 0} 个 Outlook，${requestPayload.temp_addresses?.length || 0} 个临时邮箱，方式 ${els.providerFilter?.value || "auto"}`, "info");
+    addClientLog(`刷新请求：${requestPayload.accounts?.length || 0} 个 Outlook，${requestPayload.temp_addresses?.length || 0} 个临时邮箱，方式 ${provider}`, "info");
     addClientLog(useServerStoredAccounts
       ? "本次使用管理员服务端保存的打码账号刷新"
       : "本次使用当前浏览器本地导入的邮箱凭证刷新", "info");

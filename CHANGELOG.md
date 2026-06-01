@@ -1,5 +1,12 @@
 # 更新记录
 
+## 2026-06-01 outlook-scroll
+
+- 修复首页左侧邮箱清单固定高度下无法滚动的问题，选择 20 / 50 条时不再裁掉后续邮箱。
+- Outlook 自动收信优先走 IMAP，并保留 Graph / Outlook API 作为回退；Graph 401 不再把 IMAP 可用账号误标为失败。
+- IMAP token 刷新顺序改为优先 `login.live.com`，兼容更多 Outlook 四段凭证。
+- 前端收信方式统一规范为 `auto / graph / imap`，选择单一路径失败时会提示切回微软自动。
+
 ## 2026-06-01 final
 
 - 增加轻量国际化脚本，默认中文，右上角可切换中文 / EN。

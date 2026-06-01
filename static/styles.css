@@ -628,8 +628,9 @@ button:disabled {
   height: 100%;
   min-height: 0;
   max-height: none;
-  overflow: auto;
-  overflow: overlay;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
   padding: 10px;
 }
 
@@ -1369,8 +1370,32 @@ button:disabled {
 
 .mailbox-list {
   display: grid;
+  align-content: start;
   gap: 5px;
   margin-top: 8px;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding-right: 2px;
+  scrollbar-color: rgba(67, 101, 151, 0.34) transparent;
+  scrollbar-width: thin;
+}
+
+.mailbox-panel > .mailbox-list {
+  flex: 1 1 auto;
+}
+
+.mailbox-list::-webkit-scrollbar {
+  width: 6px;
+}
+
+.mailbox-list::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.mailbox-list::-webkit-scrollbar-thumb {
+  border-radius: 999px;
+  background: rgba(67, 101, 151, 0.3);
 }
 
 .empty {
