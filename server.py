@@ -27,7 +27,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 import uuid
-from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeoutError, as_completed
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from email.header import decode_header
@@ -72,7 +72,7 @@ LOGIN_HISTORY_FILE = DATA_DIR / "login_history.json"
 LOGIN_DEBUG_DIR = DATA_DIR / "login_debug"
 UPGRADE_REQUEST_FILE = DATA_DIR / "upgrade_request.json"
 UPGRADE_RESULT_FILE = DATA_DIR / "upgrade_result.json"
-APP_VERSION = "20260601-fetch-batches"
+APP_VERSION = "20260601-fetch-background"
 
 DEFAULT_HOST = os.environ.get("MAIL_PICKUP_HOST", "127.0.0.1")
 DEFAULT_PORT = int(os.environ.get("MAIL_PICKUP_PORT", "8765"))
@@ -187,7 +187,6 @@ LOCAL_OAUTH_PORT = int(os.environ.get("MAIL_PICKUP_LOCAL_OAUTH_PORT", "1455") or
 PLAYWRIGHT_MAX_CONCURRENCY = max(1, min(int(os.environ.get("MAIL_PICKUP_PLAYWRIGHT_MAX_CONCURRENCY", "2") or 2), 2))
 PLAYWRIGHT_SEMAPHORE = threading.BoundedSemaphore(PLAYWRIGHT_MAX_CONCURRENCY)
 MAIL_FETCH_MAX_CONCURRENCY = max(1, min(int(os.environ.get("MAIL_PICKUP_FETCH_CONCURRENCY", "8") or 8), 16))
-MAIL_FETCH_JOB_TIMEOUT = max(10, min(int(os.environ.get("MAIL_PICKUP_FETCH_JOB_TIMEOUT", "45") or 45), 120))
 
 
 @dataclass
@@ -2144,44 +2143,20 @@ def run_mail_fetch_jobs(jobs: list[tuple[str, MailAccount | TempAddress, str, in
         return []
     results: list[dict[str, Any] | None] = [None] * len(jobs)
     workers = max(1, min(MAIL_FETCH_MAX_CONCURRENCY, len(jobs)))
-    executor = ThreadPoolExecutor(max_workers=workers)
-    try:
+    with ThreadPoolExecutor(max_workers=workers) as executor:
         futures = {
             executor.submit(fetch_for_account, target, provider, limit, sender_filter)
             if kind == "microsoft"
             else executor.submit(fetch_for_temp_address, target, limit, sender_filter): index
             for index, (kind, target, provider, limit, sender_filter) in enumerate(jobs)
         }
-        deadline = time.monotonic() + MAIL_FETCH_JOB_TIMEOUT
-        pending = set(futures)
-        while pending:
-            wait_left = max(0.0, deadline - time.monotonic())
-            if wait_left <= 0:
-                break
-            try:
-                ready = list(as_completed(pending, timeout=wait_left))
-            except FuturesTimeoutError:
-                break
-            for future in ready:
-                pending.remove(future)
-                index = futures[future]
-                try:
-                    results[index] = future.result()
-                except Exception as exc:
-                    kind, target, *_ = jobs[index]
-                    results[index] = mail_fetch_error_result(kind, target, str(exc))
-        for future in pending:
+        for future in as_completed(futures):
             index = futures[future]
-            kind, target, *_ = jobs[index]
-            results[index] = mail_fetch_error_result(
-                kind,
-                target,
-                f"mail fetch timeout after {MAIL_FETCH_JOB_TIMEOUT}s",
-                elapsed_ms=MAIL_FETCH_JOB_TIMEOUT * 1000,
-            )
-            future.cancel()
-    finally:
-        executor.shutdown(wait=False, cancel_futures=True)
+            try:
+                results[index] = future.result()
+            except Exception as exc:
+                kind, target, *_ = jobs[index]
+                results[index] = mail_fetch_error_result(kind, target, str(exc))
     return [result for result in results if result is not None]
 
 

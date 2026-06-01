@@ -337,7 +337,9 @@ function normalizeProviderValue(value) {
 }
 
 const MAIL_SYNC_POLL_INTERVAL_MS = 1200;
-const MAIL_SYNC_POLL_TIMEOUT_MS = 180000;
+const MAIL_SYNC_POLL_BASE_TIMEOUT_MS = 180000;
+const MAIL_SYNC_POLL_PER_MAILBOX_MS = 12000;
+const MAIL_SYNC_POLL_MAX_TIMEOUT_MS = 1800000;
 
 if (els.providerFilter) {
   els.providerFilter.value = normalizeProviderValue(els.providerFilter.value);
@@ -1530,8 +1532,12 @@ function deleteFilteredMessages() {
 
 async function waitForMailFetchJob(jobId, total) {
   const started = Date.now();
+  const timeoutMs = Math.min(
+    MAIL_SYNC_POLL_MAX_TIMEOUT_MS,
+    MAIL_SYNC_POLL_BASE_TIMEOUT_MS + Math.max(0, Number(total) || 0) * MAIL_SYNC_POLL_PER_MAILBOX_MS,
+  );
   let lastStatus = "";
-  while (Date.now() - started < MAIL_SYNC_POLL_TIMEOUT_MS) {
+  while (Date.now() - started < timeoutMs) {
     await new Promise((resolve) => setTimeout(resolve, MAIL_SYNC_POLL_INTERVAL_MS));
     const response = await fetch(`/client-api/fetch-status?job_id=${encodeURIComponent(jobId)}`, {
       headers: apiHeaders(),
@@ -1547,7 +1553,7 @@ async function waitForMailFetchJob(jobId, total) {
       addClientLog(`收信任务状态：${job.status || "running"}`, job.status === "failed" ? "error" : "info");
     }
     const elapsed = Date.now() - started;
-    const progress = Math.min(78, 28 + Math.round((elapsed / MAIL_SYNC_POLL_TIMEOUT_MS) * 45));
+    const progress = Math.min(78, 28 + Math.round((elapsed / timeoutMs) * 45));
     setInlineProgress(els.mailProgress, progress, "取信中");
     els.statusText.textContent = `正在后台收取 ${total} 个邮箱`;
     if (job.status === "success") return job.result || {};
