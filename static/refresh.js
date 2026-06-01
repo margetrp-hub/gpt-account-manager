@@ -1154,23 +1154,26 @@ function addSelectedToQueue() {
 async function removeSelectedSources() {
   const selected = selectedSourceAccounts();
   if (!selected.length) {
-    toast("先选择要移除的邮箱");
+    toast("先选择要从队列移除的邮箱");
     return;
   }
   const emails = [...new Set(selected.map((account) => accountEmailKey(account.email)).filter(Boolean))];
   if (!emails.length) return;
-  if (!confirm(`从凭证刷新页移除 ${emails.length} 个邮箱？只移除本页列表和刷新队列，不会删除邮箱管理里的邮箱资料。`)) return;
+  if (!confirm(`从凭证刷新队列移除 ${emails.length} 个邮箱？不会删除邮箱管理里的邮箱资料，也不会从左侧邮箱库移除。`)) return;
   const emailSet = new Set(emails);
-  state.accounts = state.accounts.filter((account) => !emailSet.has(accountEmailKey(account.email)));
-  state.queue = state.queue.filter((row) => !emailSet.has(accountEmailKey(row.email || row.name)));
-  emails.forEach((email) => state.savedRefreshResults.delete(email));
   selected.forEach((account) => state.selectedAccounts.delete(account.id));
+  const removedRows = state.queue.filter((row) => emailSet.has(accountEmailKey(row.email || row.name)));
+  const removedRowIds = new Set(removedRows.map((row) => row.id));
+  removedRows.forEach((row) => {
+    state.jobs.delete(row.id);
+    state.selectedQueue.delete(row.id);
+  });
+  state.queue = state.queue.filter((row) => !removedRowIds.has(row.id));
   state.selectedQueue = new Set([...state.selectedQueue].filter((id) => state.queue.some((row) => row.id === id)));
-  saveJson(STORAGE_KEYS.accounts, state.accounts);
   saveQueue();
   renderAll();
-  toast(`已从本页移除 ${emails.length} 个邮箱`);
-  addLog(`本页移除邮箱：${emails.length} 个，邮箱管理资料未删除`, "success");
+  toast(`已移出队列 ${removedRows.length} 个账号`);
+  addLog(`移出刷新队列：${removedRows.length} 个，邮箱管理资料未删除`, "success");
 }
 
 function rowState(row) {
