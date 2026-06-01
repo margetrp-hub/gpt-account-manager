@@ -263,6 +263,9 @@ async function readJsonResponse(response, label) {
     return text ? JSON.parse(text) : {};
   } catch {
     const snippet = text.replace(/\s+/g, " ").slice(0, 220);
+    if (response.status === 504 || /cloudflare|gateway timeout|<\/html>/i.test(snippet)) {
+      throw new Error(`${label} 网关超时：这一批邮箱取信时间过长，已跳过该批并继续处理后续邮箱。`);
+    }
     throw new Error(`${label} returned non-JSON (${response.status}): ${snippet}`);
   }
 }
@@ -333,6 +336,9 @@ function normalizeProviderValue(value) {
   return ["auto", "graph", "imap"].includes(provider) ? provider : "auto";
 }
 
+const MAIL_SYNC_POLL_INTERVAL_MS = 1200;
+const MAIL_SYNC_POLL_TIMEOUT_MS = 180000;
+
 if (els.providerFilter) {
   els.providerFilter.value = normalizeProviderValue(els.providerFilter.value);
 }
@@ -392,6 +398,9 @@ function humanizeMailError(value) {
   if (/Graph token failed/i.test(raw)) return raw.replace("Graph token failed:", "Graph 获取令牌失败：");
   if (/IMAP token failed/i.test(raw)) return raw.replace("IMAP token failed:", "IMAP 获取令牌失败：");
   if (/Temp address requires/i.test(raw)) return "临时邮箱缺少 API 地址或 JWT。";
+  if (/网关超时|gateway timeout|non-JSON \(504\)|mail fetch timeout|取信超时/i.test(raw)) {
+    return "邮箱取信超时。已跳过受影响邮箱/批次，不影响其它邮箱继续刷新。";
+  }
   return raw;
 }
 
@@ -409,6 +418,8 @@ const MAIL_ERROR_LABELS = {
   imap_fetch_failed: "IMAP 收信失败",
   network_tls_eof: "网络连接被截断",
   network_failed: "网络请求失败",
+  mail_fetch_timeout: "单个邮箱取信超时",
+  batch_request_failed: "本批请求失败",
   mail_fetch_failed: "收信失败",
 };
 
@@ -1516,6 +1527,35 @@ function deleteFilteredMessages() {
   addClientLog(`已批量删除 ${deleted} 封本地邮件缓存`, "success");
   toast(`已批量删除 ${deleted} 封本地邮件`);
 }
+
+async function waitForMailFetchJob(jobId, total) {
+  const started = Date.now();
+  let lastStatus = "";
+  while (Date.now() - started < MAIL_SYNC_POLL_TIMEOUT_MS) {
+    await new Promise((resolve) => setTimeout(resolve, MAIL_SYNC_POLL_INTERVAL_MS));
+    const response = await fetch(`/client-api/fetch-status?job_id=${encodeURIComponent(jobId)}`, {
+      headers: apiHeaders(),
+      cache: "no-store",
+    });
+    const data = await readJsonResponse(response, "/client-api/fetch-status");
+    if (!response.ok || data.success === false) {
+      throw new Error(data.error || response.statusText || "收信任务查询失败");
+    }
+    const job = data.job || {};
+    if (job.status !== lastStatus) {
+      lastStatus = job.status;
+      addClientLog(`收信任务状态：${job.status || "running"}`, job.status === "failed" ? "error" : "info");
+    }
+    const elapsed = Date.now() - started;
+    const progress = Math.min(78, 28 + Math.round((elapsed / MAIL_SYNC_POLL_TIMEOUT_MS) * 45));
+    setInlineProgress(els.mailProgress, progress, "取信中");
+    els.statusText.textContent = `正在后台收取 ${total} 个邮箱`;
+    if (job.status === "success") return job.result || {};
+    if (job.status === "failed") throw new Error(job.error || "收信任务失败");
+  }
+  throw new Error("收信任务等待超时，请稍后查看邮箱状态或缩小本次同步数量。");
+}
+
 function serverPayloadForSync() {
   const selected = state.accounts.filter((account) => state.selected.has(account.id));
   const targets = selected.length ? selected : state.accounts;
@@ -2407,10 +2447,10 @@ async function syncMail() {
   els.statusText.textContent = `正在刷新 ${total} 个邮箱`;
   setInlineProgress(els.mailProgress, 12, "准备");
   try {
-    const endpoint = useServerStoredAccounts ? "/api/fetch" : "/client-api/fetch";
+    const endpoint = useServerStoredAccounts ? "/api/fetch" : "/client-api/fetch-start";
     const requestPayload = useServerStoredAccounts ? serverPayloadForSync() : clientPayloadForSync(payload);
     requestPayload.provider = provider;
-    setInlineProgress(els.mailProgress, 35, "请求中");
+    setInlineProgress(els.mailProgress, 20, "请求中");
     addClientLog(`刷新请求：${requestPayload.accounts?.length || 0} 个 Outlook，${requestPayload.temp_addresses?.length || 0} 个临时邮箱，方式 ${provider}`, "info");
     addClientLog(useServerStoredAccounts
       ? "本次使用管理员服务端保存的打码账号刷新"
@@ -2420,9 +2460,16 @@ async function syncMail() {
       headers: apiHeaders(),
       body: JSON.stringify(requestPayload),
     });
-    const data = await readJsonResponse(response, endpoint);
-    if (!response.ok) throw new Error(data.error || response.statusText);
-    setInlineProgress(els.mailProgress, 72, "处理中");
+    const startedData = await readJsonResponse(response, endpoint);
+    if (!response.ok) throw new Error(startedData.error || response.statusText);
+    let data = startedData;
+    if (!useServerStoredAccounts) {
+      const jobId = startedData.job?.job_id || startedData.job_id;
+      if (!jobId) throw new Error("收信任务没有返回 job_id");
+      addClientLog(`后台收信任务已启动：${jobId}`, "info");
+      data = await waitForMailFetchJob(jobId, total);
+    }
+    setInlineProgress(els.mailProgress, 82, "处理中");
     mergeMessages(data.messages || []);
     const diagnosticCounts = applyFetchDiagnostics(data.results || []);
     const errors = [

@@ -27,7 +27,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 import uuid
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeoutError, as_completed
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from email.header import decode_header
@@ -72,7 +72,7 @@ LOGIN_HISTORY_FILE = DATA_DIR / "login_history.json"
 LOGIN_DEBUG_DIR = DATA_DIR / "login_debug"
 UPGRADE_REQUEST_FILE = DATA_DIR / "upgrade_request.json"
 UPGRADE_RESULT_FILE = DATA_DIR / "upgrade_result.json"
-APP_VERSION = "20260601-outlook-scroll"
+APP_VERSION = "20260601-fetch-batches"
 
 DEFAULT_HOST = os.environ.get("MAIL_PICKUP_HOST", "127.0.0.1")
 DEFAULT_PORT = int(os.environ.get("MAIL_PICKUP_PORT", "8765"))
@@ -176,6 +176,9 @@ CPA_PROBE_USER_AGENT = "codex_cli_rs/0.76.0 (Debian 13.0.0; x86_64) WindowsTermi
 LOGIN_JOBS: dict[str, dict[str, Any]] = {}
 LOGIN_JOBS_LOCK = threading.Lock()
 LOGIN_LOG_LIMIT = 400
+MAIL_FETCH_JOBS: dict[str, dict[str, Any]] = {}
+MAIL_FETCH_JOBS_LOCK = threading.Lock()
+MAIL_FETCH_JOB_LIMIT = 120
 LOCAL_OAUTH_FLOWS: dict[str, dict[str, Any]] = {}
 LOCAL_OAUTH_LOCK = threading.Lock()
 LOCAL_OAUTH_SERVER: ThreadingHTTPServer | None = None
@@ -184,6 +187,7 @@ LOCAL_OAUTH_PORT = int(os.environ.get("MAIL_PICKUP_LOCAL_OAUTH_PORT", "1455") or
 PLAYWRIGHT_MAX_CONCURRENCY = max(1, min(int(os.environ.get("MAIL_PICKUP_PLAYWRIGHT_MAX_CONCURRENCY", "2") or 2), 2))
 PLAYWRIGHT_SEMAPHORE = threading.BoundedSemaphore(PLAYWRIGHT_MAX_CONCURRENCY)
 MAIL_FETCH_MAX_CONCURRENCY = max(1, min(int(os.environ.get("MAIL_PICKUP_FETCH_CONCURRENCY", "8") or 8), 16))
+MAIL_FETCH_JOB_TIMEOUT = max(10, min(int(os.environ.get("MAIL_PICKUP_FETCH_JOB_TIMEOUT", "45") or 45), 120))
 
 
 @dataclass
@@ -1944,6 +1948,7 @@ MAIL_FETCH_ERROR_LABELS = {
     "imap_fetch_failed": "IMAP 收信失败",
     "network_tls_eof": "网络连接被截断",
     "network_failed": "网络请求失败",
+    "mail_fetch_timeout": "单个邮箱取信超时",
     "mail_fetch_failed": "收信失败",
 }
 
@@ -2001,6 +2006,9 @@ def classify_mail_fetch_error(raw: str, source: str = "") -> dict[str, Any]:
     elif "unexpected_eof_while_reading" in lowered or "incompleteread" in lowered or "eof occurred" in lowered:
         code = "network_tls_eof"
         hint = "TLS/代理连接中途断开；通常是代理或目标网络不稳定，建议换出口后重试。"
+    elif "mail fetch timeout" in lowered or "取信超时" in lowered:
+        code = "mail_fetch_timeout"
+        hint = "这个邮箱单独取信超时，已跳过并继续处理其它邮箱；请稍后单独重试或检查该邮箱网络/凭证。"
     elif "timed out" in lowered or "connection reset" in lowered or "connection refused" in lowered or "urlopen error" in lowered:
         code = "network_failed"
         hint = "服务器到目标站的网络请求失败；请检查 VPS 网络或代理。"
@@ -2021,6 +2029,28 @@ def apply_mail_fetch_result_fields(target: MailAccount | TempAddress, result: di
     target.last_error_code = coerce_text(result.get("error_code") or "")
     target.last_error_label = coerce_text(result.get("error_label") or "")
     target.last_error_hint = coerce_text(result.get("error_hint") or "")
+
+
+def mail_fetch_error_result(kind: str, target: MailAccount | TempAddress, message: str, *, elapsed_ms: int = 0) -> dict[str, Any]:
+    detail = classify_mail_fetch_error(f"{kind}: {message}", kind)
+    result = {
+        "source": kind,
+        "provider": "temp" if kind == "temp" else "auto",
+        "email": getattr(target, "email", ""),
+        "ok": False,
+        "checked_at": iso_now(),
+        "elapsed_ms": elapsed_ms,
+        "message_count": 0,
+        "messages": [],
+        "errors": [f"{kind}: {message}"],
+        "error": detail["error_detail"],
+        "error_code": detail["error_code"],
+        "error_label": detail["error_label"],
+        "error_hint": detail["error_hint"],
+        "retryable": detail["retryable"],
+    }
+    apply_mail_fetch_result_fields(target, result)
+    return result
 
 
 def fetch_for_account(account: MailAccount, provider: str, limit: int, sender_filter: str) -> dict[str, Any]:
@@ -2114,35 +2144,44 @@ def run_mail_fetch_jobs(jobs: list[tuple[str, MailAccount | TempAddress, str, in
         return []
     results: list[dict[str, Any] | None] = [None] * len(jobs)
     workers = max(1, min(MAIL_FETCH_MAX_CONCURRENCY, len(jobs)))
-    with ThreadPoolExecutor(max_workers=workers) as executor:
+    executor = ThreadPoolExecutor(max_workers=workers)
+    try:
         futures = {
             executor.submit(fetch_for_account, target, provider, limit, sender_filter)
             if kind == "microsoft"
             else executor.submit(fetch_for_temp_address, target, limit, sender_filter): index
             for index, (kind, target, provider, limit, sender_filter) in enumerate(jobs)
         }
-        for future in as_completed(futures):
-            index = futures[future]
+        deadline = time.monotonic() + MAIL_FETCH_JOB_TIMEOUT
+        pending = set(futures)
+        while pending:
+            wait_left = max(0.0, deadline - time.monotonic())
+            if wait_left <= 0:
+                break
             try:
-                results[index] = future.result()
-            except Exception as exc:
-                kind, target, *_ = jobs[index]
-                detail = classify_mail_fetch_error(f"{kind}: {exc}", kind)
-                results[index] = {
-                    "source": kind,
-                    "email": getattr(target, "email", ""),
-                    "ok": False,
-                    "checked_at": iso_now(),
-                    "elapsed_ms": 0,
-                    "message_count": 0,
-                    "messages": [],
-                    "errors": [f"{kind}: {exc}"],
-                    "error": detail["error_detail"],
-                    "error_code": detail["error_code"],
-                    "error_label": detail["error_label"],
-                    "error_hint": detail["error_hint"],
-                    "retryable": detail["retryable"],
-                }
+                ready = list(as_completed(pending, timeout=wait_left))
+            except FuturesTimeoutError:
+                break
+            for future in ready:
+                pending.remove(future)
+                index = futures[future]
+                try:
+                    results[index] = future.result()
+                except Exception as exc:
+                    kind, target, *_ = jobs[index]
+                    results[index] = mail_fetch_error_result(kind, target, str(exc))
+        for future in pending:
+            index = futures[future]
+            kind, target, *_ = jobs[index]
+            results[index] = mail_fetch_error_result(
+                kind,
+                target,
+                f"mail fetch timeout after {MAIL_FETCH_JOB_TIMEOUT}s",
+                elapsed_ms=MAIL_FETCH_JOB_TIMEOUT * 1000,
+            )
+            future.cancel()
+    finally:
+        executor.shutdown(wait=False, cancel_futures=True)
     return [result for result in results if result is not None]
 
 
@@ -7720,6 +7759,90 @@ def fetch_transient_client_mail(payload: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def mail_fetch_job_public(job: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "job_id": job.get("job_id"),
+        "status": job.get("status"),
+        "workspace_id": job.get("workspace_id"),
+        "created_at": job.get("created_at", ""),
+        "updated_at": job.get("updated_at", ""),
+        "finished_at": job.get("finished_at", ""),
+        "total": int(job.get("total") or 0),
+        "result": job.get("result"),
+        "error": job.get("error", ""),
+    }
+
+
+def set_mail_fetch_job(job_id: str, **updates: Any) -> None:
+    with MAIL_FETCH_JOBS_LOCK:
+        job = MAIL_FETCH_JOBS.get(job_id)
+        if not job:
+            return
+        job.update(updates)
+        job["updated_at"] = iso_now()
+        if job.get("status") in {"success", "failed"} and not job.get("finished_at"):
+            job["finished_at"] = job["updated_at"]
+
+
+def trim_mail_fetch_jobs() -> None:
+    with MAIL_FETCH_JOBS_LOCK:
+        if len(MAIL_FETCH_JOBS) <= MAIL_FETCH_JOB_LIMIT:
+            return
+        ordered = sorted(
+            MAIL_FETCH_JOBS.values(),
+            key=lambda item: coerce_text(item.get("updated_at") or item.get("created_at")),
+        )
+        for job in ordered[:max(0, len(MAIL_FETCH_JOBS) - MAIL_FETCH_JOB_LIMIT)]:
+            MAIL_FETCH_JOBS.pop(coerce_text(job.get("job_id")), None)
+
+
+def run_client_mail_fetch_job(job_id: str, payload: dict[str, Any]) -> None:
+    try:
+        result = fetch_transient_client_mail(payload)
+        set_mail_fetch_job(job_id, status="success", result=result)
+    except Exception as exc:
+        set_mail_fetch_job(job_id, status="failed", error=str(exc)[:500])
+
+
+def start_client_mail_fetch_job(payload: dict[str, Any], workspace_id: str = "public") -> dict[str, Any]:
+    hydrate_login_mail_credentials(payload, workspace_id)
+    accounts, account_errors = transient_mail_accounts(payload)
+    temp_addresses, temp_errors = transient_temp_addresses(payload)
+    total = len(accounts) + len(temp_addresses)
+    if total <= 0:
+        raise RuntimeError("当前筛选下没有可刷新邮箱")
+    job_id = secrets.token_urlsafe(12)
+    now = iso_now()
+    job = {
+        "job_id": job_id,
+        "status": "running",
+        "workspace_id": normalize_workspace_id(workspace_id),
+        "created_at": now,
+        "updated_at": now,
+        "total": total,
+        "result": None,
+        "error": "",
+        "warnings": account_errors + temp_errors,
+    }
+    with MAIL_FETCH_JOBS_LOCK:
+        MAIL_FETCH_JOBS[job_id] = job
+    trim_mail_fetch_jobs()
+    thread = threading.Thread(target=run_client_mail_fetch_job, args=(job_id, payload), daemon=True)
+    thread.start()
+    return {"success": True, "job": mail_fetch_job_public(job)}
+
+
+def get_client_mail_fetch_job(job_id: str, workspace_id: str = "public") -> dict[str, Any]:
+    expected_workspace = normalize_workspace_id(workspace_id)
+    with MAIL_FETCH_JOBS_LOCK:
+        job = MAIL_FETCH_JOBS.get(coerce_text(job_id))
+        if not job:
+            raise RuntimeError("收信任务不存在或已过期")
+        if normalize_workspace_id(job.get("workspace_id")) != expected_workspace:
+            raise RuntimeError("收信任务不属于当前工作区")
+        return {"success": True, "job": mail_fetch_job_public(job)}
+
+
 def admin_worker_headers(admin_password: str, site_password: str = "") -> dict[str, str]:
     headers = {
         **DEFAULT_HTTP_HEADERS,
@@ -8145,6 +8268,13 @@ class Handler(BaseHTTPRequestHandler):
             except Exception as exc:
                 self.send_json({"success": False, "error": str(exc)[:500]}, status=HTTPStatus.BAD_REQUEST)
             return
+        if parsed_client.path == "/client-api/fetch-status":
+            try:
+                params = urllib.parse.parse_qs(parsed_client.query)
+                self.send_json(get_client_mail_fetch_job(params.get("job_id", [""])[0], self.workspace_id()))
+            except Exception as exc:
+                self.send_json({"success": False, "error": str(exc)[:500]}, status=HTTPStatus.BAD_REQUEST)
+            return
         if parsed_client.path == "/client-api/accounts":
             try:
                 accounts = load_accounts(workspace_file(self.workspace_id(), "accounts.json"))
@@ -8241,6 +8371,12 @@ class Handler(BaseHTTPRequestHandler):
                 self.send_json(fetch_transient_client_mail(payload))
             except Exception as exc:
                 self.send_json({"error": str(exc)[:500]}, status=HTTPStatus.BAD_REQUEST)
+            return
+        if self.path == "/client-api/fetch-start":
+            try:
+                self.send_json(start_client_mail_fetch_job(self.read_json(), self.workspace_id()))
+            except Exception as exc:
+                self.send_json({"success": False, "error": str(exc)[:500]}, status=HTTPStatus.BAD_REQUEST)
             return
         if self.path == "/client-api/messages/delete":
             try:
