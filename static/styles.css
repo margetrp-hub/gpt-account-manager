@@ -581,6 +581,10 @@ button:disabled {
   text-overflow: clip;
 }
 
+#groupByImportDateBtn {
+  min-width: 0;
+}
+
 .mailbox-tools .danger {
   grid-column: auto;
 }
@@ -1410,10 +1414,10 @@ button:disabled {
 
 .mailbox-row {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(54px, auto);
+  grid-template-columns: minmax(0, 1fr) 24px;
   align-items: center;
   gap: 4px;
-  padding: 5px 6px;
+  padding: 6px 7px;
   border: 1px solid rgba(209, 224, 244, 0.78);
   border-radius: 7px;
   background: rgba(255, 255, 255, 0.62);
@@ -1445,8 +1449,8 @@ button:disabled {
 .mailbox-check {
   min-width: 0;
   display: flex;
-  align-items: flex-start;
-  gap: 5px;
+  align-items: center;
+  gap: 6px;
 }
 
 .mailbox-check input {
@@ -1458,46 +1462,52 @@ button:disabled {
 
 .mailbox-check span {
   min-width: 0;
-  display: grid;
-  gap: 2px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
 }
 
 .mailbox-check strong,
 .mailbox-check em {
-  display: block;
+  display: inline-block;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
 .mailbox-check strong {
+  min-width: 0;
+  flex: 1 1 auto;
   font-size: 11.5px;
   font-weight: 750;
-  line-height: 1.25;
+  line-height: 1.15;
 }
 
 .mailbox-check em {
   color: var(--muted);
-  font-size: 11px;
+  font-size: 10.5px;
   font-style: normal;
 }
 
 .mailbox-meta {
   display: flex;
-  min-width: 0;
+  min-width: fit-content;
   align-items: center;
   gap: 4px;
   overflow: hidden;
 }
 
-.mailbox-diagnosis {
-  display: -webkit-box !important;
-  white-space: normal !important;
-  line-height: 1.3;
-  color: #b33b51 !important;
-  font-weight: 750;
-  -webkit-line-clamp: 2;
-  -webkit-box-orient: vertical;
+.mailbox-meta-inline {
+  flex: 0 0 auto;
+}
+
+.mailbox-meta-inline em {
+  max-width: 112px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: rgba(117, 132, 151, 0.1);
+  color: #5f6f86;
+  font-weight: 800;
 }
 
 .source-badge {
@@ -1545,10 +1555,6 @@ button:disabled {
 .source-badge.refresh-badge.idle {
   background: rgba(117, 132, 151, 0.12);
   color: var(--muted);
-}
-
-.mailbox-row select {
-  display: none;
 }
 
 .icon {
@@ -3446,22 +3452,16 @@ body.modal-open {
   }
 
   .mailbox-row {
-    grid-template-columns: minmax(0, 1fr) 76px 24px;
-    grid-template-areas: "info cat del";
+    grid-template-columns: minmax(0, 1fr) 24px;
     gap: 5px;
     padding: 5px 6px;
   }
 
   .mailbox-check {
-    grid-area: info;
-  }
-
-  .mailbox-row select {
-    grid-area: cat;
+    min-width: 0;
   }
 
   .icon {
-    grid-area: del;
     align-self: start;
   }
 

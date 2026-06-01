@@ -2248,11 +2248,16 @@ def fetch_for_temp_address(address: TempAddress, limit: int, sender_filter: str)
     return result
 
 
-def run_mail_fetch_jobs(jobs: list[tuple[str, MailAccount | TempAddress, str, int, str]]) -> list[dict[str, Any]]:
+def run_mail_fetch_jobs(
+    jobs: list[tuple[str, MailAccount | TempAddress, str, int, str]],
+    progress_callback: Callable[[dict[str, Any]], None] | None = None,
+) -> list[dict[str, Any]]:
     if not jobs:
         return []
     results: list[dict[str, Any] | None] = [None] * len(jobs)
     workers = max(1, min(MAIL_FETCH_MAX_CONCURRENCY, len(jobs)))
+    total = len(jobs)
+    processed = 0
     with ThreadPoolExecutor(max_workers=workers) as executor:
         futures = {
             executor.submit(fetch_for_account, target, provider, limit, sender_filter)
@@ -2262,11 +2267,20 @@ def run_mail_fetch_jobs(jobs: list[tuple[str, MailAccount | TempAddress, str, in
         }
         for future in as_completed(futures):
             index = futures[future]
+            kind, target, *_ = jobs[index]
+            current_email = coerce_text(getattr(target, "email", ""))
             try:
                 results[index] = future.result()
             except Exception as exc:
-                kind, target, *_ = jobs[index]
                 results[index] = mail_fetch_error_result(kind, target, str(exc))
+            processed += 1
+            if progress_callback:
+                progress_callback({
+                    "processed": processed,
+                    "total": total,
+                    "current_email": current_email,
+                    "current_index": index,
+                })
     return [result for result in results if result is not None]
 
 
@@ -7801,7 +7815,10 @@ def transient_temp_addresses(payload: dict[str, Any]) -> tuple[list[TempAddress]
     return addresses, errors
 
 
-def fetch_transient_client_mail(payload: dict[str, Any]) -> dict[str, Any]:
+def fetch_transient_client_mail(
+    payload: dict[str, Any],
+    progress_callback: Callable[[dict[str, Any]], None] | None = None,
+) -> dict[str, Any]:
     accounts, account_errors = transient_mail_accounts(payload)
     temp_addresses, temp_errors = transient_temp_addresses(payload)
     if temp_addresses and not TEMP_WORKER_URL and any(not address.base_url for address in temp_addresses):
@@ -7827,7 +7844,7 @@ def fetch_transient_client_mail(payload: dict[str, Any]) -> dict[str, Any]:
                 continue
             jobs.append(("temp", address, provider, limit, sender_filter))
 
-    results = run_mail_fetch_jobs(jobs)
+    results = run_mail_fetch_jobs(jobs, progress_callback=progress_callback)
     messages = [message for result in results for message in result.get("messages", [])]
     failed_results = [result for result in results if not result.get("ok")]
     return {
@@ -7853,6 +7870,8 @@ def mail_fetch_job_public(job: dict[str, Any]) -> dict[str, Any]:
         "updated_at": job.get("updated_at", ""),
         "finished_at": job.get("finished_at", ""),
         "total": int(job.get("total") or 0),
+        "processed": int(job.get("processed") or 0),
+        "current_email": coerce_text(job.get("current_email")),
         "result": job.get("result"),
         "error": job.get("error", ""),
     }
@@ -7884,10 +7903,10 @@ def trim_mail_fetch_jobs() -> None:
 def run_client_mail_fetch_job(job_id: str, payload: dict[str, Any], workspace_id: str) -> None:
     try:
         workspace = normalize_workspace_id(workspace_id)
-        result = fetch_transient_client_mail(payload)
+        result = fetch_transient_client_mail(payload, progress_callback=lambda progress: set_mail_fetch_job(job_id, **progress))
         messages = result.get("messages", []) if isinstance(result.get("messages"), list) else []
         upsert_messages(messages, workspace_file(workspace, "messages.json"))
-        set_mail_fetch_job(job_id, status="success", result=lightweight_fetch_result(result, cached_count=len(messages)))
+        set_mail_fetch_job(job_id, status="success", processed=int(result.get("summary", {}).get("total") or 0), current_email="", result=lightweight_fetch_result(result, cached_count=len(messages)))
     except Exception as exc:
         set_mail_fetch_job(job_id, status="failed", error=str(exc)[:500])
 
@@ -7909,6 +7928,8 @@ def start_client_mail_fetch_job(payload: dict[str, Any], workspace_id: str = "pu
         "created_at": now,
         "updated_at": now,
         "total": total,
+        "processed": 0,
+        "current_email": "",
         "result": None,
         "error": "",
         "warnings": account_errors + temp_errors,

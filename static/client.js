@@ -96,6 +96,7 @@ const els = {
   mailboxTotal: document.querySelector("#mailboxTotal"),
   categoryName: document.querySelector("#categoryName"),
   addCategoryBtn: document.querySelector("#addCategoryBtn"),
+  groupByImportDateBtn: document.querySelector("#groupByImportDateBtn"),
   deleteCategoryBtn: document.querySelector("#deleteCategoryBtn"),
   clearLocalBtn: document.querySelector("#clearLocalBtn"),
   backupLocalBtn: document.querySelector("#backupLocalBtn"),
@@ -1178,27 +1179,26 @@ function renderAccounts() {
     const stateClass = statusClass(account.last_status);
     const sourceClass = account.source === "temp" ? "temp" : "ms";
     const sourceText = account.source === "temp" ? "临时" : "Outlook";
-    const checked = account.last_check_at ? ` · ${formatTime(account.last_check_at)}` : "";
-    const count = Number(account.last_message_count || 0);
-    const countText = account.last_status === "ok" ? ` · ${count} 封` : "";
-    const title = [account.last_error_label, account.last_error, account.last_error_hint].filter(Boolean).join(" · ");
-    const diagnosis = account.last_status === "error"
-      ? `<em class="mailbox-diagnosis" title="${escapeHtml(title)}">${escapeHtml(account.last_error_label || "收信失败")}：${escapeHtml(account.last_error_hint || account.last_error || "请检查凭证或网络")}</em>`
-      : `<em>${escapeHtml(statusLabel(account))}${escapeHtml(countText)}${escapeHtml(checked)}</em>`;
+    const category = account.category || EMPTY_CATEGORY_LABEL;
+    const title = [
+      account.email,
+      `分组：${category}`,
+      sourceText,
+      statusLabel(account),
+      account.last_error_label || account.last_error || "",
+    ].filter(Boolean).join(" · ");
     return `
     <div class="mailbox-row refresh-state-${escapeHtml(stateClass)}" data-id="${escapeHtml(account.id)}">
-      <label class="mailbox-check">
+      <label class="mailbox-check" title="${escapeHtml(title)}">
         <input type="checkbox" ${state.selected.has(account.id) ? "checked" : ""}>
         <span>
           <strong>${escapeHtml(account.email)}</strong>
-          <small class="mailbox-meta">
+          <small class="mailbox-meta mailbox-meta-inline">
             <b class="source-badge ${sourceClass}">${sourceText}</b>
-            <b class="source-badge refresh-badge ${stateClass}">${escapeHtml(statusLabel(account))}</b>
+            <em>${escapeHtml(category)}</em>
           </small>
-          ${diagnosis}
         </span>
       </label>
-      <select>${accountCategoryOptions(account.category || "")}</select>
       <button class="icon danger" type="button" aria-label="删除">×</button>
     </div>
   `;
@@ -1283,6 +1283,16 @@ function formatTime(value) {
   const date = new Date(String(value).replace(" ", "T"));
   if (Number.isNaN(date.getTime())) return value;
   return date.toLocaleString();
+}
+
+function importDateCategory(value) {
+  if (!value) return "";
+  const date = new Date(String(value).replace(" ", "T"));
+  if (Number.isNaN(date.getTime())) return "";
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
 }
 
 function iframeDocument(content) {
@@ -1555,10 +1565,14 @@ async function waitForMailFetchJob(jobId, total) {
       lastStatus = job.status;
       addClientLog(`收信任务状态：${job.status || "running"}`, job.status === "failed" ? "error" : "info");
     }
-    const elapsed = Date.now() - started;
-    const progress = Math.min(78, 28 + Math.round((elapsed / timeoutMs) * 45));
-    setInlineProgress(els.mailProgress, progress, "取信中");
-    els.statusText.textContent = `正在后台收取 ${total} 个邮箱`;
+    const processed = Math.max(0, Number(job.processed || 0));
+    const totalCount = Math.max(1, Number(job.total || total || 0));
+    const currentEmail = String(job.current_email || "").trim();
+    const progress = Math.max(12, Math.min(96, Math.round((processed / totalCount) * 100)));
+    setInlineProgress(els.mailProgress, progress, `${processed}/${totalCount}`);
+    els.statusText.textContent = currentEmail
+      ? `正在后台收取 ${processed}/${totalCount} 个邮箱 · 当前 ${currentEmail}`
+      : `正在后台收取 ${processed}/${totalCount} 个邮箱`;
     if (job.status === "success") return job.result || {};
     if (job.status === "failed") throw new Error(job.error || "收信任务失败");
   }
@@ -2322,15 +2336,18 @@ function upsertAccounts(incoming) {
       byId.delete(`microsoft:${account.email.toLowerCase()}`);
     }
     const existing = byId.get(account.id);
+    const now = new Date().toISOString();
     if (existing) {
       Object.assign(existing, account, {
-        updated_at: new Date().toISOString(),
+        created_at: existing.created_at || account.created_at || now,
+        updated_at: now,
       });
       updated += 1;
     } else {
       byId.set(account.id, {
         ...account,
-        updated_at: new Date().toISOString(),
+        created_at: account.created_at || now,
+        updated_at: now,
       });
       imported += 1;
     }
@@ -2453,8 +2470,8 @@ async function syncMail() {
   }
   els.syncBtn.disabled = true;
   els.syncBtn.textContent = "刷新中";
-  els.statusText.textContent = `正在刷新 ${total} 个邮箱`;
-  setInlineProgress(els.mailProgress, 12, "准备");
+  els.statusText.textContent = `正在后台收取 0/${total} 个邮箱`;
+  setInlineProgress(els.mailProgress, 12, `0/${total}`);
   try {
     const endpoint = useServerStoredAccounts ? "/api/fetch" : "/client-api/fetch-start";
     const requestPayload = useServerStoredAccounts ? serverPayloadForSync() : clientPayloadForSync(payload);
@@ -2562,6 +2579,25 @@ function renderAll() {
   renderLoginTable();
 }
 
+function groupAccountsByImportDate() {
+  if (!state.accounts.length) {
+    toast("还没有可分组的邮箱");
+    return;
+  }
+  let changed = 0;
+  state.accounts.forEach((account) => {
+    const nextCategory = importDateCategory(account.created_at || account.updated_at);
+    if (!nextCategory || account.category === nextCategory) return;
+    account.category = nextCategory;
+    ensureCategory(nextCategory);
+    changed += 1;
+  });
+  saveJson(STORAGE_KEYS.accounts, state.accounts);
+  saveJson(STORAGE_KEYS.categories, state.categories);
+  renderAll();
+  toast(changed ? `已按导入日期分组 ${changed} 个邮箱` : "当前邮箱已经按导入日期分组");
+}
+
 els.importMailboxBtn.addEventListener("click", () => openImportDialog("auto"));
 els.tabImportBtn?.addEventListener("click", () => openImportDialog("auto"));
 els.tabLoginBtn?.addEventListener("click", () => setActiveView("login"));
@@ -2592,6 +2628,7 @@ els.addCategoryBtn.addEventListener("click", () => {
   saveJson(STORAGE_KEYS.categories, state.categories);
   renderAll();
 });
+els.groupByImportDateBtn?.addEventListener("click", groupAccountsByImportDate);
 els.deleteCategoryBtn.addEventListener("click", () => {
   const category = els.mailboxCategoryFilter.value;
   if (!category || category === "all") {
@@ -2638,12 +2675,6 @@ els.mailboxList.addEventListener("change", (event) => {
   if (event.target.matches("input[type='checkbox']")) {
     if (event.target.checked) state.selected.add(account.id);
     else state.selected.delete(account.id);
-  }
-  if (event.target.matches("select")) {
-    account.category = event.target.value;
-    saveJson(STORAGE_KEYS.accounts, state.accounts);
-    renderAll();
-    loadServerMessages({ silent: true });
   }
 });
 els.mailboxList.addEventListener("click", (event) => {
