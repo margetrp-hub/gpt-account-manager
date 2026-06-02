@@ -173,6 +173,42 @@ function normalizeStoredCategories(value) {
   return [...new Set(rows.map((item) => String(item || "").trim()).filter(Boolean))].sort((a, b) => a.localeCompare(b));
 }
 
+function sortableTime(value) {
+  const time = new Date(String(value || "").replace(" ", "T")).getTime();
+  return Number.isNaN(time) ? 0 : time;
+}
+
+function sortAccounts(accounts) {
+  return [...accounts].sort((a, b) => {
+    const batchDiff = sortableTime(b.imported_at || b.created_at || b.updated_at)
+      - sortableTime(a.imported_at || a.created_at || a.updated_at);
+    if (batchDiff) return batchDiff;
+    const orderDiff = Number(a.import_order ?? 0) - Number(b.import_order ?? 0);
+    if (orderDiff) return orderDiff;
+    return String(a.email || "").localeCompare(String(b.email || ""));
+  });
+}
+
+function importDateCategory(value) {
+  const date = new Date(String(value || "").replace(" ", "T"));
+  if (Number.isNaN(date.getTime())) return "";
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+function applyImportBatch(rows, importedAt = new Date().toISOString()) {
+  const category = importDateCategory(importedAt);
+  rows.forEach((row, index) => {
+    row.imported_at = importedAt;
+    row.import_order = index + 1;
+    row.category = row.category || category;
+  });
+  if (category) ensureCategory(category);
+  return category;
+}
+
 function normalizeStoredAccount(account) {
   if (!account || typeof account !== "object") return null;
   const email = String(account.email || "").trim();
@@ -217,7 +253,7 @@ function normalizeStoredAccounts(value) {
     if (normalized.source === "temp") byId.delete(`microsoft:${normalized.email.toLowerCase()}`);
     byId.set(normalized.id, normalized);
   });
-  return [...byId.values()].sort((a, b) => a.email.localeCompare(b.email));
+  return sortAccounts(byId.values());
 }
 
 function normalizeServerMailbox(item, source) {
@@ -466,7 +502,7 @@ function upsertAccounts(incoming) {
     }
     if (account.category) ensureCategory(account.category);
   });
-  state.accounts = [...byId.values()].sort((a, b) => a.email.localeCompare(b.email));
+  state.accounts = sortAccounts(byId.values());
   saveAll();
   return { imported, updated };
 }
@@ -491,7 +527,7 @@ function mergeServerAccounts(items) {
     }
     if (item.category) ensureCategory(item.category);
   });
-  state.accounts = [...byId.values()].sort((a, b) => a.email.localeCompare(b.email));
+  state.accounts = sortAccounts(byId.values());
   saveAll();
 }
 
@@ -751,13 +787,14 @@ async function importMailboxes() {
     row.base_url = normalizeTempWorkerUrl(row.base_url || els.tempApi.value);
     row.site_password = row.site_password || els.tempSitePassword.value.trim();
   });
+  const importGroup = applyImportBatch(rows);
   saveTempSettings();
   els.confirmImport.disabled = true;
   els.confirmImport.textContent = "导入中";
   try {
     await persistImportedRows(rows);
     const summary = upsertAccounts(rows);
-    setStatus(`已导入 ${summary.imported} 个，更新 ${summary.updated} 个。`, "ok");
+    setStatus(`已导入 ${summary.imported} 个，更新 ${summary.updated} 个，分组：${importGroup || "未分组"}。`, "ok");
     toast(`已导入 ${rows.length} 个邮箱`);
     closeImportModal();
     await syncMailboxes({ quiet: true });

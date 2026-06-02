@@ -547,6 +547,33 @@ function normalizeStoredCategories(value) {
   return cleaned.length && cleaned.every((category) => LEGACY_SEEDED_CATEGORIES.has(category)) ? [] : cleaned;
 }
 
+function sortableTime(value) {
+  const time = new Date(String(value || "").replace(" ", "T")).getTime();
+  return Number.isNaN(time) ? 0 : time;
+}
+
+function sortAccounts(accounts) {
+  return [...accounts].sort((a, b) => {
+    const batchDiff = sortableTime(b.imported_at || b.created_at || b.updated_at)
+      - sortableTime(a.imported_at || a.created_at || a.updated_at);
+    if (batchDiff) return batchDiff;
+    const orderDiff = Number(a.import_order ?? 0) - Number(b.import_order ?? 0);
+    if (orderDiff) return orderDiff;
+    return String(a.email || "").localeCompare(String(b.email || ""));
+  });
+}
+
+function applyImportBatch(rows, importedAt = new Date().toISOString()) {
+  const category = importDateCategory(importedAt);
+  rows.forEach((row, index) => {
+    row.imported_at = importedAt;
+    row.import_order = index + 1;
+    row.category = row.category || category;
+  });
+  if (category) ensureCategory(category);
+  return category;
+}
+
 function looksLikeJwt(value) {
   const text = String(value || "").trim();
   return text.split(".").length >= 3 || text.length > 80;
@@ -629,7 +656,7 @@ function normalizeStoredAccounts(value) {
     }
     byId.set(normalized.id, normalized);
   });
-  return [...byId.values()].sort((a, b) => a.email.localeCompare(b.email));
+  return sortAccounts(byId.values());
 }
 
 function normalizeStoredMessages(value) {
@@ -818,7 +845,7 @@ function mergeServerAccountsSnapshot(items) {
     state.selected.add(item.id);
     if (item.category) ensureCategory(item.category);
   });
-  state.accounts = [...byId.values()].sort((a, b) => a.email.localeCompare(b.email));
+  state.accounts = sortAccounts(byId.values());
   saveJson(STORAGE_KEYS.accounts, state.accounts);
   saveJson(STORAGE_KEYS.categories, state.categories);
   return { imported, updated };
@@ -2398,7 +2425,7 @@ function upsertAccounts(incoming) {
     state.selected.add(account.id);
     if (account.category) ensureCategory(account.category);
   });
-  state.accounts = [...byId.values()].sort((a, b) => a.email.localeCompare(b.email));
+  state.accounts = sortAccounts(byId.values());
   saveJson(STORAGE_KEYS.accounts, state.accounts);
   saveJson(STORAGE_KEYS.categories, state.categories);
   return { imported, updated };
@@ -2424,10 +2451,11 @@ async function importAccounts(source, text) {
     });
     saveTempSettings();
   }
+  const importGroup = applyImportBatch(rows);
   const summary = upsertAccounts(rows);
   await persistImportedAccounts(source, rows);
   addClientLog(`导入 ${rows.length} 个账号；仅保存在当前浏览器本地`, "success");
-  toast(`已导入 ${summary.imported} 个账号${summary.updated ? `，更新 ${summary.updated} 个` : ""}${errors.length ? `，${errors.length} 行失败` : ""}`);
+  toast(`已导入 ${summary.imported} 个账号${summary.updated ? `，更新 ${summary.updated} 个` : ""}，分组：${importGroup || "未分组"}${errors.length ? `，${errors.length} 行失败` : ""}`);
   renderAll();
   closeImportDialog();
 }
