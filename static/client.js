@@ -188,6 +188,7 @@ const state = {
   loginPoller: undefined,
   page: 1,
   mailboxPage: 1,
+  lastFetchMessageCount: 0,
 };
 
 const cpaSettings = loadJson(STORAGE_KEYS.cpaSettings, {});
@@ -1432,12 +1433,15 @@ function renderDetail(message) {
 
 function payloadForSync() {
   const selected = state.accounts.filter((account) => state.selected.has(account.id));
-  const targets = selected.length ? selected : state.accounts;
+  const active = state.activeMailboxId ? state.accounts.filter((account) => account.id === state.activeMailboxId) : [];
+  const filtered = filteredAccounts();
+  const targets = selected.length ? selected : (active.length ? active : filtered);
   const source = els.sourceFilter.value;
   const includeTemp = source === "all" || source === "temp";
   const includeMicrosoft = source === "all" || source === "microsoft";
   return {
     source,
+    emails: targets.map((account) => account.email).filter(Boolean),
     provider: els.providerFilter?.value || "auto",
     sender_filter: els.senderInput.value.trim(),
     limit: 20,
@@ -1593,11 +1597,10 @@ async function waitForMailFetchJob(jobId, total) {
 }
 
 function serverPayloadForSync() {
-  const selected = state.accounts.filter((account) => state.selected.has(account.id));
-  const targets = selected.length ? selected : state.accounts;
   const payload = payloadForSync();
+  const targets = selectedAccountsForPayload(payload);
   const maskedIds = new Set(
-    selectedAccountsForPayload(payload)
+    targets
       .filter((account) => accountHasMaskedCredential(account) && !hasUsableLocalCredential(account))
       .map((account) => account.id)
   );
@@ -2570,6 +2573,7 @@ async function syncMail() {
   els.syncBtn.textContent = "刷新中";
   els.statusText.textContent = `正在后台收取 0/${total} 个邮箱`;
   setInlineProgress(els.mailProgress, 12, `0/${total}`);
+  const beforeCount = Number(state.messageTotal || state.messages.length || 0);
   try {
     const endpoint = useServerStoredAccounts ? "/api/fetch" : "/client-api/fetch-start";
     const requestPayload = useServerStoredAccounts ? serverPayloadForSync() : clientPayloadForSync(payload);
@@ -2607,10 +2611,14 @@ async function syncMail() {
     const okCount = Number(summary.ok ?? diagnosticCounts.ok ?? 0);
     const failedCount = Number(summary.failed ?? diagnosticCounts.failed ?? errors.length);
     const resultMessageCount = (data.results || []).reduce((sum, result) => sum + Number(result.message_count || 0), 0);
-    const messageCount = Number(summary.messages ?? data.cached_messages ?? resultMessageCount);
+    const fetchedCount = Number(summary.messages ?? resultMessageCount);
+    const afterCount = Number(state.messageTotal || state.messages.length || 0);
+    const newCount = Math.max(0, afterCount - beforeCount);
+    state.lastFetchMessageCount = fetchedCount;
     els.statusText.textContent = errors.length
-      ? `刷新完成：成功 ${okCount}，失败 ${failedCount}，新收 ${messageCount} 封；首个原因：${String(errors[0]).slice(0, 90)}`
-      : `刷新完成：成功 ${okCount}，新收 ${messageCount} 封`;
+      ? `刷新完成：成功 ${okCount}，失败 ${failedCount}，本次取回 ${fetchedCount} 封，新邮件 ${newCount} 封；首个原因：${String(errors[0]).slice(0, 90)}`
+      : `刷新完成：成功 ${okCount}，本次取回 ${fetchedCount} 封，新邮件 ${newCount} 封`;
+    addClientLog(`收取完成：处理 ${total} 个邮箱，本次取回 ${fetchedCount} 封，新邮件 ${newCount} 封`, errors.length ? "warning" : "success");
     (data.results || []).filter((result) => !result.ok).slice(0, 12).forEach((result) => {
       const label = result.error_label || result.error_code || "收信失败";
       const hint = result.error_hint || humanizeMailError((result.errors || [])[0] || result.error || "");

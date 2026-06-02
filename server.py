@@ -72,7 +72,7 @@ LOGIN_HISTORY_FILE = DATA_DIR / "login_history.json"
 LOGIN_DEBUG_DIR = DATA_DIR / "login_debug"
 UPGRADE_REQUEST_FILE = DATA_DIR / "upgrade_request.json"
 UPGRADE_RESULT_FILE = DATA_DIR / "upgrade_result.json"
-APP_VERSION = "20260602-mailbox-export-lines"
+APP_VERSION = "20260602-mail-scope-warehouse"
 
 DEFAULT_HOST = os.environ.get("MAIL_PICKUP_HOST", "127.0.0.1")
 DEFAULT_PORT = int(os.environ.get("MAIL_PICKUP_PORT", "8765"))
@@ -7713,19 +7713,32 @@ def login_mail_credential_counts(payload: dict[str, Any]) -> dict[str, int]:
 
 
 def hydrate_login_mail_credentials(payload: dict[str, Any], workspace_id: str = "public") -> dict[str, int]:
+    selected_emails = [
+        coerce_text(item).lower()
+        for item in payload.get("emails", [])
+        if "@" in coerce_text(item)
+    ]
     email_addr = coerce_text(payload.get("email")).lower()
-    if "@" not in email_addr:
+    if "@" in email_addr:
+        selected_emails.append(email_addr)
+    selected_emails = list(dict.fromkeys(selected_emails))
+    if not selected_emails:
         return {"microsoft": 0, "temp": 0, "added": 0, "updated": 0}
     accounts = [item for item in payload.get("accounts", []) if isinstance(item, dict)]
     temp_addresses = [item for item in payload.get("temp_addresses", []) if isinstance(item, dict)]
     added = 0
     updated = 0
 
-    def same_email(item: dict[str, Any]) -> bool:
-        return coerce_text(item.get("email")).lower() == email_addr
+    stored_accounts = load_accounts(workspace_file(workspace_id, "accounts.json"))
+    stored_temp_addresses = load_temp_addresses(workspace_file(workspace_id, "temp_addresses.json"))
 
-    if not any(same_email(item) and usable_secret(item.get("client_id")) and usable_secret(item.get("refresh_token")) for item in accounts):
-        stored = load_accounts(workspace_file(workspace_id, "accounts.json")).get(email_addr)
+    def same_email(item: dict[str, Any], target: str) -> bool:
+        return coerce_text(item.get("email")).lower() == target
+
+    for target_email in selected_emails:
+        if any(same_email(item, target_email) and usable_secret(item.get("client_id")) and usable_secret(item.get("refresh_token")) for item in accounts):
+            continue
+        stored = stored_accounts.get(target_email)
         if stored and usable_secret(stored.client_id) and usable_secret(stored.refresh_token):
             stored_item = {
                 "email": stored.email,
@@ -7736,7 +7749,7 @@ def hydrate_login_mail_credentials(payload: dict[str, Any], workspace_id: str = 
             }
             replaced = False
             for index, item in enumerate(accounts):
-                if same_email(item):
+                if same_email(item, target_email):
                     accounts[index] = {**item, **stored_item}
                     replaced = True
                     updated += 1
@@ -7745,8 +7758,10 @@ def hydrate_login_mail_credentials(payload: dict[str, Any], workspace_id: str = 
                 accounts.append(stored_item)
                 added += 1
 
-    if not any(same_email(item) and usable_secret(item.get("jwt")) for item in temp_addresses):
-        stored_temp = load_temp_addresses(workspace_file(workspace_id, "temp_addresses.json")).get(email_addr)
+    for target_email in selected_emails:
+        if any(same_email(item, target_email) and usable_secret(item.get("jwt")) for item in temp_addresses):
+            continue
+        stored_temp = stored_temp_addresses.get(target_email)
         if stored_temp and usable_secret(stored_temp.jwt):
             stored_item = {
                 "email": stored_temp.email,
@@ -7757,7 +7772,7 @@ def hydrate_login_mail_credentials(payload: dict[str, Any], workspace_id: str = 
             }
             replaced = False
             for index, item in enumerate(temp_addresses):
-                if same_email(item):
+                if same_email(item, target_email):
                     temp_addresses[index] = {**item, **stored_item}
                     replaced = True
                     updated += 1

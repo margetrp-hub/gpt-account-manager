@@ -1246,6 +1246,8 @@
       (() => {
         const SETTINGS_KEY = "ctgptm-cpa-warehouse-settings";
         const MAIL_ACCOUNTS_KEY = "ctgptm.mail.accounts";
+        const MAIL_TEMP_SETTINGS_KEY = "ctgptm.mail.tempSettings";
+        const WORKSPACE_KEY = "ctgptm.workspaceId";
         const REFRESH_QUEUE_KEY = "ctgptm.mail.refreshQueue";
         const state = {
           busy: false,
@@ -1255,6 +1257,8 @@
           rows: [],
           manualAccounts: [],
           manualTempAddresses: [],
+          workspaceAccounts: [],
+          workspaceTempAddresses: [],
           selectedRows: new Set(),
           repairRow: undefined,
           convertedAuth: undefined,
@@ -1644,7 +1648,7 @@
         }
 
         function getPayload() {
-          const localAccounts = loadJson(MAIL_ACCOUNTS_KEY, []);
+          const localAccounts = allKnownMailAccounts();
           return {
             base_url: elements.baseUrl.value.trim() || "http://localhost:8317",
             management_key: elements.managementKey.value.trim(),
@@ -1662,9 +1666,33 @@
             temp_addresses: localAccounts.filter((account) => account.source === "temp").map((account) => ({
               email: account.email,
               jwt: account.jwt,
+              base_url: account.base_url,
+              site_password: account.site_password,
               category: account.category,
             })).concat(state.manualTempAddresses),
           };
+        }
+
+        function rememberedAdminToken() {
+          return new URLSearchParams(window.location.search).get("token") || localStorage.getItem("ctgptm.admin.toolToken") || "";
+        }
+
+        function getWorkspaceId() {
+          const existing = localStorage.getItem(WORKSPACE_KEY) || "";
+          if (/^[A-Za-z0-9][A-Za-z0-9_.-]{5,63}$/.test(existing)) return existing;
+          const next = `ws_${crypto.randomUUID().replace(/-/g, "")}`;
+          localStorage.setItem(WORKSPACE_KEY, next);
+          return next;
+        }
+
+        function apiHeaders() {
+          const headers = {
+            "Content-Type": "application/json",
+            "X-Workspace-Id": getWorkspaceId(),
+          };
+          const token = rememberedAdminToken();
+          if (token) headers.Authorization = `Bearer ${token}`;
+          return headers;
         }
 
         function validatePayload(payload) {
@@ -1681,6 +1709,40 @@
             return false;
           }
           return true;
+        }
+
+        async function readJsonResponse(response, label) {
+          const text = await response.text();
+          try {
+            return text ? JSON.parse(text) : {};
+          } catch {
+            throw new Error(`${label} 返回了非 JSON`);
+          }
+        }
+
+        async function syncWorkspaceMailboxes({ quiet = false } = {}) {
+          try {
+            const [accountsResponse, tempResponse] = await Promise.all([
+              fetch("/client-api/accounts", { headers: apiHeaders(), cache: "no-store" }),
+              fetch("/client-api/temp-addresses", { headers: apiHeaders(), cache: "no-store" }),
+            ]);
+            const [accountsData, tempData] = await Promise.all([
+              readJsonResponse(accountsResponse, "/client-api/accounts"),
+              readJsonResponse(tempResponse, "/client-api/temp-addresses"),
+            ]);
+            if (!accountsResponse.ok) throw new Error(accountsData.error || "Outlook 邮箱同步失败");
+            if (!tempResponse.ok) throw new Error(tempData.error || "临时邮箱同步失败");
+            state.workspaceAccounts = Array.isArray(accountsData.accounts)
+              ? accountsData.accounts.map((item) => ({ ...item, source: "microsoft" }))
+              : [];
+            state.workspaceTempAddresses = Array.isArray(tempData.addresses)
+              ? tempData.addresses.map((item) => ({ ...item, source: "temp" }))
+              : [];
+            if (!quiet) addLog(`已同步工作区取件资料：Outlook ${state.workspaceAccounts.length}，临时邮箱 ${state.workspaceTempAddresses.length}`, "success");
+            if (state.rows.length) renderRows(state.rows);
+          } catch (error) {
+            if (!quiet) addLog(error instanceof Error ? error.message : "同步工作区取件资料失败", "warning");
+          }
         }
 
         function updateStats(summary = {}) {
@@ -1939,9 +2001,17 @@
         }
 
         function findLocalAccounts(email) {
-          const accounts = loadJson(MAIL_ACCOUNTS_KEY, []);
-          return accounts.concat(state.manualAccounts, state.manualTempAddresses)
+          return allKnownMailAccounts()
             .filter((account) => String(account.email || "").toLowerCase() === String(email || "").toLowerCase());
+        }
+
+        function allKnownMailAccounts() {
+          return loadJson(MAIL_ACCOUNTS_KEY, [])
+            .concat(state.workspaceAccounts, state.workspaceTempAddresses, state.manualAccounts, state.manualTempAddresses);
+        }
+
+        function tempSettings() {
+          return loadJson(MAIL_TEMP_SETTINGS_KEY, {});
         }
 
         function parseManual401Rows(text) {
@@ -1997,6 +2067,7 @@
         }
 
         async function fetchRepairMail() {
+          await syncWorkspaceMailboxes({ quiet: true });
           const email = state.repairRow?.email || state.repairRow?.account || "";
           if (!email) {
             setStatus(elements.repairMailStatus, "当前 401 凭证没有邮箱，无法自动收验证码。", "error");
@@ -2004,14 +2075,16 @@
           }
           const accounts = findLocalAccounts(email);
           if (!accounts.length) {
-            setStatus(elements.repairMailStatus, "本地账号管理页里没有这个邮箱，请先在账号管理页导入。", "error");
-            return;
+            setStatus(elements.repairMailStatus, "本地没有取件凭证，先尝试用临时邮箱后台读取。");
           }
           setButtonBusy(elements.fetchRepairMail, true, "收取中...");
           try {
+            const settings = tempSettings();
             const tempAddresses = accounts.filter((account) => account.source === "temp").map((account) => ({
               email: account.email,
               jwt: account.jwt,
+              base_url: account.base_url || settings.base_url || "",
+              site_password: account.site_password || settings.site_password || "",
               category: account.category,
             })).concat(state.manualTempAddresses.filter((account) => String(account.email || "").toLowerCase() === email.toLowerCase()));
             const microsoftAccounts = accounts.filter((account) => account.source === "microsoft").map((account) => ({
@@ -2023,12 +2096,13 @@
             })).concat(state.manualAccounts.filter((account) => String(account.email || "").toLowerCase() === email.toLowerCase()));
             const response = await fetch("/client-api/fetch", {
               method: "POST",
-              headers: { "Content-Type": "application/json" },
+              headers: apiHeaders(),
               body: JSON.stringify({
                 source: "all",
                 provider: "auto",
                 sender_filter: "",
                 limit: 20,
+                emails: [email],
                 temp_addresses: tempAddresses,
                 accounts: microsoftAccounts,
               }),
@@ -2312,6 +2386,7 @@
 
         async function requestWarehouse(action, options = {}) {
           saveSettings();
+          await syncWorkspaceMailboxes({ quiet: true });
           const payload = getPayload();
           if (!validatePayload(payload)) {
             return undefined;
@@ -2342,7 +2417,7 @@
           try {
             const response = await fetch(`/client-api/cpa/${endpoint}`, {
               method: "POST",
-              headers: { "Content-Type": "application/json" },
+              headers: apiHeaders(),
               body: JSON.stringify(payload),
             });
             const data = await response.json();
@@ -2500,6 +2575,7 @@
         });
 
         loadSettings();
+        syncWorkspaceMailboxes({ quiet: true });
         if (elements.autoToggle.checked) {
           startAuto();
         }
