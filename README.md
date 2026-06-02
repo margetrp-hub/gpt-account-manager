@@ -71,9 +71,48 @@
 
 下面是实际页面渲染后的脱敏截图，邮箱、token、代理和账号标识都已经打码。
 
-![凭证刷新工作台](docs/screenshots/refresh-workbench-masked.png)
+### 账号管理台
+
+![账号管理台](docs/screenshots/account-workbench-masked.png)
+
+### 风险仪表盘
+
+![风险仪表盘](docs/screenshots/dashboard-overview-masked.png)
+
+### 邮箱管理
 
 ![邮箱管理页](docs/screenshots/mailbox-manager-masked.png)
+
+### 凭证刷新
+
+![凭证刷新工作台](docs/screenshots/refresh-workbench-masked.png)
+
+### CPA 仓管
+
+![CPA 仓管](docs/screenshots/cpa-warehouse-masked.png)
+
+### Session 转换
+
+![Session 转换](docs/screenshots/converter-workbench-masked.png)
+
+### 部署自检
+
+![部署自检](docs/screenshots/health-check-masked.png)
+
+## 后续优化路线图
+
+这些是接下来最值得优先做的方向，重点不是堆更多按钮，而是提高批量刷新成功率、降低误判、让错误可以被直接处理。
+
+- 收信 Provider 层独立：把 Outlook Graph、Outlook IMAP、临时邮箱 CF API、163、QQ、iCloud、Gmail、Yahoo、普通 IMAP / POP3 都整理成统一接口，分别负责校验、取信和验证码提取。
+- 刷新任务状态机：每个账号固定走 `待执行 -> 检查邮箱 -> 等待验证码 -> 提交验证码 -> 生成凭证 -> 同步 CPA -> 完成/失败`，支持暂停、终止、重试、跳过和页面重开后的进度恢复。
+- 错误原因标准化：主界面只显示邮箱不可用、未收到验证码、验证码无效、需要手机验证、账号封禁、额度耗尽、OAuth 会话失效、CPA 同步失败、网络连接失败等可处理类型；原始错误放到展开详情。
+- 邮箱库和刷新队列继续强隔离：邮箱管理页是长期资产库，刷新页只是本次任务队列；刷新页删除只能删队列，不动邮箱库。
+- 导入前邮箱校验：新导入邮箱先进入待验证，按并发池检查收信能力，通过后再推入刷新队列，失败自动进入错误邮箱分组。
+- CPA 仓管巡检报告：统计 FREE、PLUS、TEAM、PROX5、PROX20 数量，同时展示可刷新、失败、封禁、需要手机验证和未巡检数量。
+- 验证码交互优化：邮箱验证码和手机验证码都走“自动优先，手动兜底”，超时后在账号行显示小的手动填码入口，不长期占住前台。
+- 邮件缓存升级：邮件正文、HTML、收信结果、封禁统计逐步迁到 SQLite，前端只分页读取，避免浏览器 localStorage 容量问题。
+- 收信进度更准确：批量收信显示 `13/215` 这类进度，并标明当前邮箱、新邮件数量、是否找到验证码；单个邮箱失败不影响整批继续跑。
+- 封禁和风控仪表盘增强：按天统计封禁邮件、验证码邮件、风控提醒、异常邮箱和刷新成功率，方便判断当天是邮箱池问题还是账号池问题。
 
 ## 数据边界
 
