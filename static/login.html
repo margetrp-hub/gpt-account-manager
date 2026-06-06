@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>GPT账号管理助手 - 管理员登录</title>
+  <title>GPT账号管理助手 - 登录</title>
   <link rel="stylesheet" href="/styles.css?v={{APP_VERSION}}">
   <link rel="stylesheet" href="/forge-theme.css?v={{APP_VERSION}}">
   <script src="/i18n.js?v={{APP_VERSION}}" defer></script>
@@ -14,18 +14,18 @@
       <a class="brand" href="/" aria-label="GPT账号管理助手">
         <span class="brand-mark" aria-hidden="true">AD</span>
         <span class="brand-copy">
-          <strong>管理员登录</strong>
-          <em>本机记住令牌，后续进入管理员页和自检页不用再拼 URL</em>
+          <strong>登录 GPT账号管理助手</strong>
+          <em>验证访问令牌后回到原访问位置</em>
         </span>
       </a>
       <form id="adminLoginForm" class="admin-login-form">
         <label>
-          <span>管理令牌</span>
-          <input id="adminToken" type="password" autocomplete="current-password" placeholder="MAIL_PICKUP_ADMIN_TOKEN" autofocus>
+          <span>访问令牌</span>
+          <input id="adminToken" type="password" autocomplete="current-password" placeholder="请输入访问令牌" autofocus>
         </label>
-        <button id="loginButton" class="primary" type="submit">进入</button>
+        <button id="loginButton" class="primary" type="submit">登录</button>
       </form>
-      <p id="loginStatus" class="login-note">令牌只保存在当前浏览器和本工具的登录 Cookie 中。</p>
+      <p id="loginStatus" class="login-note">令牌验证成功后会写入 HttpOnly 登录 Cookie；管理员页和自检页继续使用同一套认证。</p>
     </section>
   </main>
   <script>
@@ -63,7 +63,7 @@
       } catch (error) {
         status.textContent = error.message || "登录失败";
         button.disabled = false;
-        button.textContent = "进入";
+        button.textContent = "登录";
       }
     });
   </script>
