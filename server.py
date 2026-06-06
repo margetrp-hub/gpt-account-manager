@@ -119,6 +119,7 @@ DEFAULT_HOST = os.environ.get("MAIL_PICKUP_HOST", "127.0.0.1")
 DEFAULT_PORT = int(os.environ.get("MAIL_PICKUP_PORT", "8765"))
 ADMIN_TOKEN = os.environ.get("MAIL_PICKUP_ADMIN_TOKEN", "").strip()
 ADMIN_COOKIE_NAME = "ctgptm_admin_token"
+REQUIRE_SITE_LOGIN = os.environ.get("GPT_ACCOUNT_MANAGER_REQUIRE_LOGIN", "").strip().lower() in {"1", "true", "yes", "on"}
 PUBLIC_STORE_URL = (os.environ.get("GPT_ACCOUNT_MANAGER_STORE_URL") or os.environ.get("CTGPTM_STORE_URL", "")).strip()
 PUBLIC_RELAY_URL = (os.environ.get("GPT_ACCOUNT_MANAGER_RELAY_URL") or os.environ.get("CTGPTM_RELAY_URL", "")).strip()
 PUBLIC_POOL_URL = (os.environ.get("GPT_ACCOUNT_MANAGER_PUBLIC_POOL_URL") or os.environ.get("CTGPTM_PUBLIC_POOL_URL", "")).strip()
@@ -9171,6 +9172,9 @@ class Handler(BaseHTTPRequestHandler):
     def do_GET(self) -> None:
         parsed_request = urllib.parse.urlparse(self.path)
         request_path = parsed_request.path
+        if self.site_login_required(request_path):
+            self.redirect_to_login(request_path, parsed_request.query)
+            return
         if request_path == "/public-config":
             self.send_json({
                 "title": PUBLIC_APP_TITLE,
@@ -9372,6 +9376,11 @@ class Handler(BaseHTTPRequestHandler):
         self.serve_static()
 
     def do_POST(self) -> None:
+        parsed_request = urllib.parse.urlparse(self.path)
+        request_path = parsed_request.path
+        if self.site_login_required(request_path):
+            self.send_json({"error": "Login required"}, status=HTTPStatus.UNAUTHORIZED)
+            return
         if self.path == "/auth/login":
             try:
                 payload = self.read_json()
@@ -9807,6 +9816,34 @@ class Handler(BaseHTTPRequestHandler):
         local_hosts = {"127.0.0.1", "localhost", "::1", "[::1]"}
         return self.client_address[0] in {"127.0.0.1", "::1"} and host in local_hosts
 
+    def site_login_required(self, request_path: str) -> bool:
+        if not REQUIRE_SITE_LOGIN:
+            return False
+        if self.admin_request_authorized():
+            return False
+        path = request_path.lower()
+        public_paths = {
+            "/login",
+            "/login.html",
+            "/auth/login",
+            "/auth/logout",
+            "/favicon.ico",
+            "/styles.css",
+            "/forge-theme.css",
+            "/i18n.js",
+        }
+        return path not in public_paths
+
+    def redirect_to_login(self, request_path: str, query: str = "") -> None:
+        target = request_path or "/"
+        if query:
+            target = f"{target}?{query}"
+        location = "/login.html?" + urllib.parse.urlencode({"next": target})
+        self.send_response(HTTPStatus.FOUND)
+        self.send_header("Location", location)
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+
     def require_auth(self) -> None:
         if not ADMIN_TOKEN:
             if self.path.startswith("/admin-api/") and not self.is_local_request():
@@ -9968,6 +10005,8 @@ def main() -> None:
 
     server = ThreadingHTTPServer((DEFAULT_HOST, DEFAULT_PORT), Handler)
     print(f"GPT Account Manager running at http://{DEFAULT_HOST}:{DEFAULT_PORT}", flush=True)
+    if REQUIRE_SITE_LOGIN:
+        print("Site login is enabled for workbench pages.", flush=True)
     if not ADMIN_TOKEN:
         print("Warning: MAIL_PICKUP_ADMIN_TOKEN is not set. Bind to 127.0.0.1 or protect with a reverse proxy.", flush=True)
     try:

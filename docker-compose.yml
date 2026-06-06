@@ -24,6 +24,7 @@ services:
       GPT_ACCOUNT_MANAGER_TEMP_SITE_PASSWORD: ${GPT_ACCOUNT_MANAGER_TEMP_SITE_PASSWORD:-}
       MAIL_PICKUP_LOGIN_STRATEGY: protocol
       MAIL_PICKUP_NODE_BIN: node
+      GPT_ACCOUNT_MANAGER_REQUIRE_LOGIN: ${GPT_ACCOUNT_MANAGER_REQUIRE_LOGIN:-0}
     volumes:
       - ./data:/app/data
       - ./.cache:/app/.cache

@@ -212,6 +212,9 @@ MAIL_PICKUP_NODE_BIN=node
 # MAIL_PICKUP_CHATGPT_LOGIN_URL=https://chatgpt.com/auth/login
 # OPENAI_OAUTH_REDIRECT_URI=http://localhost:1455/auth/callback
 # OPENAI_OAUTH_REFRESH_SCOPE=openid profile email
+
+# 可选：启用整站登录保护。开启后普通工作台页面也需要先用 MAIL_PICKUP_ADMIN_TOKEN 登录。
+# GPT_ACCOUNT_MANAGER_REQUIRE_LOGIN=1
 ```
 
 刷新流程会调用 `openai_sentinel_token.cjs`，所以部署机需要有 `node`。如果使用 `socks4://` 或 `socks5://` 代理，还需要安装 PySocks：
