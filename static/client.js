@@ -265,6 +265,7 @@ const state = {
   categories: normalizeStoredCategories(loadJson(STORAGE_KEYS.categories, [])),
   messages: [],
   messageTotal: 0,
+  hiddenMessageCount: 0,
   messagesLoading: false,
   ignoredMessageKeys: new Set(loadJson(STORAGE_KEYS.ignoredMessages, [])),
   abnormalRows: normalizeStoredAbnormalRows(loadJson(STORAGE_KEYS.abnormalRows, [])),
@@ -278,11 +279,14 @@ const state = {
   activeView: "mail",
   loginJobs: new Map(),
   loginPoller: undefined,
+  loginPollInFlight: false,
   page: 1,
   mailboxPage: 1,
   lastFetchMessageCount: 0,
   mailboxControlsCollapsed: loadJson(STORAGE_KEYS.mailboxControlsCollapsed, true) !== false,
   mailboxSyncRequestId: 0,
+  filteredAccountsCacheKey: "",
+  filteredAccountsCacheRows: [],
 };
 const pendingSaveTimers = new Map();
 
@@ -433,6 +437,26 @@ async function readJsonResponse(response, label) {
       throw new Error(`${label} 网关超时：这一批邮箱取信时间过长，已跳过该批并继续处理后续邮箱。`);
     }
     throw new Error(`${label} returned non-JSON (${response.status}): ${snippet}`);
+  }
+}
+
+async function fetchJsonWithTimeout(url, options = {}, label = "请求失败", timeoutMs = 15000) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(new DOMException("timeout", "AbortError")), timeoutMs);
+  try {
+    const response = await fetch(url, {
+      ...options,
+      signal: controller.signal,
+    });
+    const data = await readJsonResponse(response, label);
+    return { response, data };
+  } catch (error) {
+    if (error?.name === "AbortError") {
+      throw new Error(`${label} 超时`);
+    }
+    throw error;
+  } finally {
+    clearTimeout(timer);
   }
 }
 
@@ -1132,6 +1156,7 @@ function mergeServerAccountsSnapshot(items) {
     if (item.category) ensureCategory(item.category);
   });
   state.accounts = sortAccounts(byId.values());
+  invalidateFilteredAccountsCache();
   saveJson(STORAGE_KEYS.accounts, state.accounts);
   saveJson(STORAGE_KEYS.categories, state.categories);
   return { imported, updated };
@@ -1140,6 +1165,8 @@ function mergeServerAccountsSnapshot(items) {
 async function syncAccountsFromServer({ silent = false } = {}) {
   if (!hasAdminToken()) return false;
   try {
+    const previousActiveMailboxId = state.activeMailboxId;
+    const previousActiveMailboxEmail = state.activeMailboxEmail;
     const [accountsResponse, tempResponse, genericResponse] = await Promise.all([
       fetch("/client-api/accounts", { headers: apiHeaders(), cache: "no-store" }),
       fetch("/client-api/temp-addresses", { headers: apiHeaders(), cache: "no-store" }),
@@ -1165,11 +1192,14 @@ async function syncAccountsFromServer({ silent = false } = {}) {
       ...((genericData.accounts || []).map((item) => normalizeServerMailbox(item, "generic")).filter(Boolean)),
     ];
     const summary = mergeServerAccountsSnapshot(normalized);
+    syncActiveMailboxSelection();
     if (!silent) {
       addClientLog(`已从服务端同步 ${normalized.length} 个邮箱，新增 ${summary.imported}，更新 ${summary.updated}`, "success");
       toast(`已从云端同步 ${normalized.length} 个邮箱`);
     }
-    renderAll();
+    const includeMessages = previousActiveMailboxId !== state.activeMailboxId
+      || previousActiveMailboxEmail !== state.activeMailboxEmail;
+    renderAll({ includeMessages });
     return true;
   } catch (error) {
     if (!silent) {
@@ -1464,6 +1494,7 @@ function markAccountBanned(email) {
   });
   if (changed) {
     ensureCategory("已封禁");
+    invalidateFilteredAccountsCache();
     saveJson(STORAGE_KEYS.accounts, state.accounts);
     saveJson(STORAGE_KEYS.categories, state.categories);
   }
@@ -1493,6 +1524,7 @@ function removeCategory(name) {
   state.accounts.forEach((account) => {
     if (account.category === clean) account.category = "";
   });
+  invalidateFilteredAccountsCache();
   saveJson(STORAGE_KEYS.accounts, state.accounts);
   saveJson(STORAGE_KEYS.categories, state.categories);
 }
@@ -1516,8 +1548,24 @@ function filterAccounts() {
   });
 }
 
+function filteredAccountsCacheKey() {
+  return JSON.stringify([
+    state.accounts.length,
+    state.accounts[0]?.id || "",
+    state.accounts[state.accounts.length - 1]?.id || "",
+    els.mailboxCategoryFilter?.value || "all",
+    els.mailboxSearch?.value.trim().toLowerCase() || "",
+    state.mailboxSourceFilter || "all",
+  ]);
+}
+
 function filteredAccounts() {
-  return filterAccounts();
+  const cacheKey = filteredAccountsCacheKey();
+  if (cacheKey === state.filteredAccountsCacheKey) return state.filteredAccountsCacheRows;
+  const rows = filterAccounts();
+  state.filteredAccountsCacheKey = cacheKey;
+  state.filteredAccountsCacheRows = rows;
+  return rows;
 }
 
 function renderCategories() {
@@ -1655,7 +1703,9 @@ function applyLoadedMessages(loaded) {
   if (!response.ok || data.success === false) {
     throw new Error(data.error || response.statusText || "读取邮件缓存失败");
   }
-  state.messages = normalizeStoredMessages(data.messages || []).filter((message) => !isIgnoredMessage(message));
+  const normalized = normalizeStoredMessages(data.messages || []);
+  state.hiddenMessageCount = normalized.filter((message) => isIgnoredMessage(message)).length;
+  state.messages = normalized.filter((message) => !isIgnoredMessage(message));
   state.messageTotal = Number(data.count ?? state.messages.length);
   applyBannedStateFromMessages();
 }
@@ -1737,19 +1787,24 @@ function renderMessages() {
   const messages = state.messages;
   const size = Number(els.pageSize.value || 20);
   const total = Number(state.messageTotal || messages.length || 0);
+  const hiddenOnPage = Number(state.hiddenMessageCount || 0);
   const pages = Math.max(1, Math.ceil(total / size));
   state.page = Math.min(Math.max(1, state.page), pages);
   const pageItems = messages;
 
   const mailboxSuffix = state.activeMailboxEmail ? ` · ${state.activeMailboxEmail}` : "";
-  els.pageSummary.textContent = state.messagesLoading ? "读取邮件缓存中" : `${total} 封邮件${mailboxSuffix}`;
+  const scope = resolvedMessageScope();
+  els.pageSummary.textContent = state.messagesLoading
+    ? "读取邮件缓存中"
+    : `${total} 封匹配邮件${hiddenOnPage ? ` · 本页隐藏 ${hiddenOnPage} 封` : ""}${mailboxSuffix}`;
   els.pageText.textContent = `${state.page} / ${pages}`;
   els.prevPage.disabled = state.page <= 1;
   els.nextPage.disabled = state.page >= pages;
   if (els.deleteFilteredBtn) {
     const typeLabel = selectedMailTypeLabel();
     els.deleteFilteredBtn.disabled = !total;
-    els.deleteFilteredBtn.textContent = total ? `删除${typeLabel || "邮件"} ${total}` : "批量删除";
+    const scopeLabel = syncScopeLabel(scope);
+    els.deleteFilteredBtn.textContent = total ? `删除${typeLabel || "邮件"} ${total} · ${scopeLabel}` : "批量删除";
   }
 
   if (!pageItems.length) {
@@ -1846,8 +1901,15 @@ function renderDetail(message) {
   }
 }
 
-function payloadForSync() {
-  const targets = syncTargetAccounts();
+function normalizeMessageScope(scope = resolvedMessageScope()) {
+  if (Array.isArray(scope)) return { kind: "filtered", targets: scope };
+  if (scope && Array.isArray(scope.targets)) return scope;
+  return { kind: "filtered", targets: [] };
+}
+
+function payloadForSync(scope = resolvedMessageScope()) {
+  const resolvedScope = normalizeMessageScope(scope);
+  const targets = resolvedScope.targets;
   const source = els.sourceFilter.value;
   const includeTemp = source === "all" || source === "temp";
   const includeMicrosoft = source === "all" || source === "microsoft";
@@ -1883,28 +1945,29 @@ function payloadForSync() {
 }
 
 function syncTargetAccounts() {
-  const filtered = filteredAccounts();
-  const selectedVisible = filtered.filter((account) => state.selected.has(account.id));
-  if (selectedVisible.length) return selectedVisible;
-  const active = filtered.find((account) => account.id === state.activeMailboxId);
-  if (active) return [active];
-  return filtered;
+  return resolvedMessageScope().targets;
 }
 
-function syncScopeLabel(targets) {
-  if (!targets.length) return "当前筛选";
-  const filtered = filteredAccounts();
-  const selectedVisible = filtered.filter((account) => state.selected.has(account.id));
-  if (selectedVisible.length) return `勾选邮箱 ${targets.length} 个`;
-  if (targets.length === 1 && state.activeMailboxId && targets[0]?.id === state.activeMailboxId) {
-    return `当前邮箱 ${targets[0].email || ""}`;
-  }
-  return `当前筛选 ${targets.length} 个`;
+function syncScopeLabel(scope = resolvedMessageScope()) {
+  const resolvedScope = normalizeMessageScope(scope);
+  const effectiveTargets = resolvedScope.targets;
+  if (!effectiveTargets.length) return "当前筛选";
+  if (resolvedScope.kind === "selected") return `勾选邮箱 ${effectiveTargets.length} 个`;
+  if (resolvedScope.kind === "active") return `当前邮箱 ${effectiveTargets[0]?.email || ""}`;
+  return `当前筛选 ${effectiveTargets.length} 个`;
 }
 
 
-function selectedVisibleMailboxAccounts() {
-  return filteredAccounts().filter((account) => state.selected.has(account.id));
+function selectedVisibleMailboxAccounts(rows = filteredAccounts()) {
+  return rows.filter((account) => state.selected.has(account.id));
+}
+
+function resolvedMessageScope(rows = filteredAccounts()) {
+  const selected = selectedVisibleMailboxAccounts(rows);
+  if (selected.length) return { kind: "selected", targets: selected };
+  const active = rows.find((account) => account.id === state.activeMailboxId);
+  if (active) return { kind: "active", targets: [active] };
+  return { kind: "filtered", targets: rows };
 }
 
 function accountPayloadForMessage(message) {
@@ -1983,13 +2046,13 @@ async function deleteMessage(message) {
 async function deleteFilteredMessages() {
   const total = Number(state.messageTotal || 0);
   if (!total) return;
-  const selectedAccounts = selectedVisibleMailboxAccounts();
+  const scope = resolvedMessageScope();
+  const selectedAccounts = scope.kind === "selected" ? scope.targets : [];
+  const scopeLabel = syncScopeLabel(scope);
   const typeLabel = selectedMailTypeLabel();
   const typeScope = typeLabel ? `${typeLabel}类型的 ` : "";
-  const scope = selectedAccounts.length
-    ? `当前筛选/选中范围内 ${typeScope}${total} 封邮件`
-    : `当前筛选结果内 ${typeScope}${total} 封邮件`;
-  if (!confirm(`确认删除${scope}？只删除本工具本地缓存，不会删除远端真实邮箱；后续刷新也不会再显示这些邮件。`)) return;
+  const scopeText = `${scopeLabel}内 ${typeScope}${total} 封邮件`;
+  if (!confirm(`确认删除${scopeText}？只删除本工具本地缓存，不会删除远端真实邮箱；后续刷新也不会再显示这些邮件。`)) return;
   const filter = Object.fromEntries(messageQueryParams().entries());
   if (selectedAccounts.length) {
     filter.accounts = selectedAccounts.map((account) => account.email).filter(Boolean);
@@ -2023,11 +2086,10 @@ async function waitForMailFetchJob(jobId, total) {
   let lastStatus = "";
   while (Date.now() - started < timeoutMs) {
     await new Promise((resolve) => setTimeout(resolve, MAIL_SYNC_POLL_INTERVAL_MS));
-    const response = await fetch(`/client-api/fetch-status?job_id=${encodeURIComponent(jobId)}`, {
+    const { response, data } = await fetchJsonWithTimeout(`/client-api/fetch-status?job_id=${encodeURIComponent(jobId)}`, {
       headers: apiHeaders(),
       cache: "no-store",
-    });
-    const data = await readJsonResponse(response, "/client-api/fetch-status");
+    }, "/client-api/fetch-status", Math.min(12000, MAIL_SYNC_POLL_INTERVAL_MS + 10000));
     if (!response.ok || data.success === false) {
       throw new Error(data.error || response.statusText || "收信任务查询失败");
     }
@@ -2347,6 +2409,11 @@ function pruneSelectedMailboxesToCurrentFilter() {
   });
 }
 
+function invalidateFilteredAccountsCache() {
+  state.filteredAccountsCacheKey = "";
+  state.filteredAccountsCacheRows = [];
+}
+
 function localAccountForEmail(email) {
   const lower = String(email || "").toLowerCase();
   return state.accounts.find((account) => account.email.toLowerCase() === lower) || null;
@@ -2631,69 +2698,78 @@ function startLoginPolling() {
 }
 
 async function pollLoginJobs() {
-  const pending = state.abnormalRows.filter((row) => {
-    const status = rowStateFor(row).status;
-    return status === "queued" || status === "running";
-  });
-  if (!pending.length) {
-    clearInterval(state.loginPoller);
-    state.loginPoller = undefined;
-    return;
-  }
-  for (const row of pending) {
-    const current = rowStateFor(row);
-    if (!current.jobId) continue;
-    try {
-      const response = await fetch(`/client-api/cpa/login-status?job_id=${encodeURIComponent(current.jobId)}`, { headers: apiHeaders(), cache: "no-store" });
-      const data = await readJsonResponse(response, "/client-api/cpa/login-status");
-      if (!response.ok || !data.success) throw new Error(data.error || "读取登录任务失败");
-      const job = data.job || {};
-      const previousLogCount = current.logs?.length || 0;
-      (job.logs || []).slice(previousLogCount).forEach((entry) => {
-        addClientLog(`${row.email || row.name} ${entry.message || ""}`, entry.level || "info");
-      });
-      const result = job.result || {};
-      const authFile = result.auth_file || result.result?.auth_file || null;
-      if (authFile && typeof authFile === "object") {
-        row.auth_file = authFile;
-        const account = accountForRow(row);
-        if (account) {
-          account.auth_file = authFile;
-          account.access_token = authFile.access_token || account.access_token || "";
-          account.refresh_token = authFile.refresh_token || account.refresh_token || "";
-          account.id_token = authFile.id_token || account.id_token || "";
-          account.session_token = authFile.session_token || account.session_token || "";
-          account.account_id = authFile.account_id || authFile.chatgpt_account_id || account.account_id || "";
-          account.chatgpt_account_id = authFile.chatgpt_account_id || authFile.account_id || account.chatgpt_account_id || "";
-          account.plan_type = authFile.plan_type || authFile.chatgpt_plan_type || account.plan_type || "";
-          account.last_refresh = authFile.last_refresh || new Date().toISOString();
-        }
-      }
-      row.status = job.status || "running";
-      row.error = job.error || "";
-      row.logs = job.logs || [];
-      saveAbnormalRows();
-      saveJson(STORAGE_KEYS.accounts, state.accounts);
-      state.loginJobs.set(row.id, {
-        status: job.status || "running",
-        jobId: current.jobId,
-        error: job.error || "",
-        logs: job.logs || [],
-      });
-    } catch (error) {
-      row.status = "failed";
-      row.error = error.message || "读取登录任务失败";
-      saveAbnormalRows();
-      state.loginJobs.set(row.id, {
-        status: "failed",
-        jobId: current.jobId,
-        error: error.message || "读取登录任务失败",
-        logs: current.logs || [],
-      });
-      addClientLog(`${row.email || row.name} ${error.message || "读取登录任务失败"}`, "error");
+  if (state.loginPollInFlight) return;
+  state.loginPollInFlight = true;
+  try {
+    const pending = state.abnormalRows.filter((row) => {
+      const status = rowStateFor(row).status;
+      return status === "queued" || status === "running";
+    });
+    if (!pending.length) {
+      clearInterval(state.loginPoller);
+      state.loginPoller = undefined;
+      return;
     }
+    for (const row of pending) {
+      const current = rowStateFor(row);
+      if (!current.jobId) continue;
+      try {
+        const { response, data } = await fetchJsonWithTimeout(`/client-api/cpa/login-status?job_id=${encodeURIComponent(current.jobId)}`, {
+          headers: apiHeaders(),
+          cache: "no-store",
+        }, "/client-api/cpa/login-status", 12000);
+        if (!response.ok || !data.success) throw new Error(data.error || "读取登录任务失败");
+        const job = data.job || {};
+        const previousLogCount = current.logs?.length || 0;
+        (job.logs || []).slice(previousLogCount).forEach((entry) => {
+          addClientLog(`${row.email || row.name} ${entry.message || ""}`, entry.level || "info");
+        });
+        const result = job.result || {};
+        const authFile = result.auth_file || result.result?.auth_file || null;
+        if (authFile && typeof authFile === "object") {
+          row.auth_file = authFile;
+          const account = accountForRow(row);
+          if (account) {
+            account.auth_file = authFile;
+            account.access_token = authFile.access_token || account.access_token || "";
+            account.refresh_token = authFile.refresh_token || account.refresh_token || "";
+            account.id_token = authFile.id_token || account.id_token || "";
+            account.session_token = authFile.session_token || account.session_token || "";
+            account.account_id = authFile.account_id || authFile.chatgpt_account_id || account.account_id || "";
+            account.chatgpt_account_id = authFile.chatgpt_account_id || authFile.account_id || account.chatgpt_account_id || "";
+            account.plan_type = authFile.plan_type || authFile.chatgpt_plan_type || account.plan_type || "";
+            account.last_refresh = authFile.last_refresh || new Date().toISOString();
+          }
+        }
+        row.status = job.status || "running";
+        row.error = job.error || "";
+        row.logs = job.logs || [];
+        saveAbnormalRows();
+        invalidateFilteredAccountsCache();
+        saveJson(STORAGE_KEYS.accounts, state.accounts);
+        state.loginJobs.set(row.id, {
+          status: job.status || "running",
+          jobId: current.jobId,
+          error: job.error || "",
+          logs: job.logs || [],
+        });
+      } catch (error) {
+        row.status = "failed";
+        row.error = error.message || "读取登录任务失败";
+        saveAbnormalRows();
+        state.loginJobs.set(row.id, {
+          status: "failed",
+          jobId: current.jobId,
+          error: error.message || "读取登录任务失败",
+          logs: current.logs || [],
+        });
+        addClientLog(`${row.email || row.name} ${error.message || "读取登录任务失败"}`, "error");
+      }
+    }
+    renderLoginTable();
+  } finally {
+    state.loginPollInFlight = false;
   }
-  renderLoginTable();
 }
 
 Object.assign(MAIL_SERVICES.microsoft, {
@@ -2913,6 +2989,7 @@ function upsertAccounts(incoming) {
     if (account.category) ensureCategory(account.category);
   });
   state.accounts = sortAccounts(byId.values());
+  invalidateFilteredAccountsCache();
   saveJson(STORAGE_KEYS.accounts, state.accounts);
   saveJson(STORAGE_KEYS.categories, state.categories);
   return { imported, updated };
@@ -2996,9 +3073,9 @@ async function importAccounts(source, text) {
     saveTempSettings();
   }
   const importGroup = applyImportBatch(rows);
-  const summary = upsertAccounts(rows);
   await persistImportedAccounts(source, rows);
-  addClientLog(`导入 ${rows.length} 个账号；仅保存在当前浏览器本地`, "success");
+  const summary = upsertAccounts(rows);
+  addClientLog(`导入 ${rows.length} 个账号；服务端与当前浏览器已同步`, "success");
   toast(`已导入 ${summary.imported} 个账号${summary.updated ? `，更新 ${summary.updated} 个` : ""}，分组：${importGroup || "未分组"}${errors.length ? `，${errors.length} 行失败` : ""}`);
   renderAll();
   closeImportDialog();
@@ -3130,7 +3207,8 @@ async function syncMail() {
   }
   pruneSelectedMailboxesToCurrentFilter();
   syncActiveMailboxSelection();
-  const payload = payloadForSync();
+  const scope = resolvedMessageScope();
+  const payload = payloadForSync(scope);
   const total = payload.temp_addresses.length + payload.accounts.length + payload.generic_accounts.length;
   if (!total) {
     toast("当前筛选下没有可刷新邮箱");
@@ -3155,7 +3233,7 @@ async function syncMail() {
     const requestPayload = clientPayloadForSync(payload);
     requestPayload.provider = provider;
     setInlineProgress(els.mailProgress, 20, "请求中");
-    addClientLog(`收取范围：${syncScopeLabel(syncTargetAccounts())}`, "info");
+    addClientLog(`收取范围：${syncScopeLabel(scope)}`, "info");
     addClientLog(`刷新请求：${requestPayload.accounts?.length || 0} 个 Outlook，${requestPayload.temp_addresses?.length || 0} 个临时邮箱，${requestPayload.generic_accounts?.length || 0} 个其他邮箱，方式 ${provider}`, "info");
     addClientLog(payloadHasMaskedCredentials(payload)
       ? "本次使用当前工作区保存的邮箱凭证补齐打码账号"
@@ -3252,14 +3330,14 @@ function pushActiveMessageAccountToRefresh() {
   }
   toast(exists ? "这个邮箱已在凭证刷新池" : "已推送到凭证刷新池");
 }
-function renderAll() {
+function renderAll({ includeMessages = true } = {}) {
   state.categories = state.categories.filter((category) => isAllowedCategory(category));
   saveJson(STORAGE_KEYS.categories, state.categories);
   syncActiveMailboxSelection();
   applyMailboxControlsState();
   renderCategories();
   renderAccounts();
-  renderMessages();
+  if (includeMessages) renderMessages();
   renderLoginTable();
 }
 
@@ -3276,6 +3354,7 @@ function groupAccountsByImportDate() {
     ensureCategory(nextCategory);
     changed += 1;
   });
+  invalidateFilteredAccountsCache();
   saveJson(STORAGE_KEYS.accounts, state.accounts);
   saveJson(STORAGE_KEYS.categories, state.categories);
   renderAll();
@@ -3335,8 +3414,10 @@ els.deleteCategoryBtn.addEventListener("click", () => {
 els.clearLocalBtn.addEventListener("click", () => {
   if (!confirm("确定清空当前浏览器里的邮箱和分类？服务端邮件缓存请用批量删除单独清理。")) return;
   state.accounts = [];
+  invalidateFilteredAccountsCache();
   state.messages = [];
   state.messageTotal = 0;
+  state.hiddenMessageCount = 0;
   state.selected.clear();
   state.activeMessageKey = "";
   saveJson(STORAGE_KEYS.accounts, state.accounts);
@@ -3388,6 +3469,7 @@ els.mailboxList.addEventListener("click", (event) => {
   }
   if (!event.target.matches("button.icon")) return;
   state.accounts = state.accounts.filter((item) => item.id !== row.dataset.id);
+  invalidateFilteredAccountsCache();
   state.selected.delete(row.dataset.id);
   state.abnormalRows = state.abnormalRows.filter((item) => item.account_id !== row.dataset.id);
   state.selectedAbnormal.delete(row.dataset.id);

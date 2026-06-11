@@ -212,6 +212,66 @@ class MailFetchServiceTests(unittest.TestCase):
         self.assertEqual(progress[0]["processed"], 1)
         self.assertEqual(progress[0]["current_email"], "user@example.com")
 
+    def test_prepare_saved_workspace_request_filters_jobs_and_preserves_tuple_fields(self):
+        service, captured, _validations = self.make_service()
+
+        prepared = service.prepare_saved_workspace_request(
+            {
+                "emails": ["user2@example.com"],
+                "source": "all",
+                "provider": "graph",
+                "sender_filter": "openai",
+                "limit": 9,
+            },
+            accounts={
+                "user1@example.com": DummyAccount(email="user1@example.com"),
+                "user2@example.com": DummyAccount(email="user2@example.com"),
+            },
+            temp_addresses={
+                "user2@example.com": DummyAccount(email="user2@example.com"),
+                "user3@example.com": DummyAccount(email="user3@example.com"),
+            },
+            generic_accounts={
+                "user2@example.com": DummyAccount(email="user2@example.com"),
+                "user4@example.com": DummyAccount(email="user4@example.com"),
+            },
+        )
+
+        self.assertEqual(prepared.total_targets, 3)
+        self.assertEqual([job[0] for job in prepared.jobs], ["microsoft", "temp", "generic"])
+        self.assertEqual([getattr(job[1], "email", "") for job in prepared.jobs], ["user2@example.com"] * 3)
+        self.assertEqual([job[2] for job in prepared.jobs], ["graph", "graph", "graph"])
+        self.assertEqual([job[3] for job in prepared.jobs], [9, 9, 9])
+        self.assertEqual([job[4] for job in prepared.jobs], ["openai", "openai", "openai"])
+        self.assertIsNone(captured["jobs"])
+
+    def test_fetch_saved_workspace_wraps_prepared_state_and_result(self):
+        run_result = [{
+            "ok": True,
+            "messages": [{"received_at": "2026-06-08T05:00:00+00:00", "subject": "saved"}],
+        }]
+        service, captured, _validations = self.make_service(run_result=run_result)
+        accounts = {"user@example.com": DummyAccount(email="user@example.com")}
+
+        progress = []
+        fetched = service.fetch_saved_workspace(
+            {"source": "microsoft", "emails": ["user@example.com"], "provider": "auto", "limit": 5},
+            accounts=accounts,
+            temp_addresses={},
+            generic_accounts={},
+            progress_callback=lambda item: progress.append(item),
+        )
+
+        self.assertIs(fetched.accounts, accounts)
+        self.assertEqual(len(captured["jobs"]), 1)
+        self.assertEqual(captured["jobs"][0][0], "microsoft")
+        self.assertEqual(captured["jobs"][0][1].email, "user@example.com")
+        self.assertEqual(captured["jobs"][0][2], "auto")
+        self.assertEqual(captured["jobs"][0][3], 5)
+        self.assertEqual(fetched.result["summary"]["ok"], 1)
+        self.assertEqual(fetched.result["messages"][0]["subject"], "saved")
+        self.assertEqual(progress[0]["current_email"], "user@example.com")
+
     def test_prepare_request_keeps_parse_errors_alongside_valid_rows(self):
         service, _captured, _validations = self.make_service()
 

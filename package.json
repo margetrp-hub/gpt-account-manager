@@ -1,7 +1,7 @@
 {
   "name": "gpt-account-manager",
   "private": true,
-  "version": "1.0.1",
+  "version": "1.0.2",
   "description": "浏览器优先的 GPT 账号管理助手，支持邮箱验证码、OAuth 刷新、CPA 仓管和 Sub2API auth 导出。",
   "repository": {
     "type": "git",

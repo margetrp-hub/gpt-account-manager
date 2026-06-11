@@ -810,6 +810,14 @@ function selectedRows() {
   return state.accounts.filter((account) => state.selected.has(account.id) && visibleIds.has(account.id));
 }
 
+function resolvedMailboxActionRows({ fallback = "none" } = {}) {
+  const selected = selectedRows();
+  if (selected.length) return selected;
+  if (fallback === "page") return visibleAccountsForCurrentPage();
+  if (fallback === "filtered") return filteredAccounts();
+  return [];
+}
+
 function pruneSelectedRowsToCurrentFilter() {
   const visibleIds = new Set(filteredAccounts().map((account) => account.id));
   state.selected.forEach((id) => {
@@ -862,6 +870,13 @@ function visibleAccountsForCurrentPage() {
   const page = Math.min(Math.max(1, state.page), totalPages);
   const start = (page - 1) * pageSize;
   return rows.slice(start, start + pageSize);
+}
+
+function syncSelectionUi(visible = visibleAccountsForCurrentPage()) {
+  const visibleIds = visible.map((account) => account.id);
+  const selectedOnPage = visibleIds.filter((id) => state.selected.has(id)).length;
+  els.selectAll.checked = Boolean(visible.length && selectedOnPage === visible.length);
+  els.selectAll.indeterminate = Boolean(selectedOnPage && selectedOnPage < visible.length);
 }
 
 function renderGroupFilter() {
@@ -944,10 +959,7 @@ function renderTable() {
     }).join("");
   }
 
-  const visibleIds = visible.map((account) => account.id);
-  const selectedOnPage = visibleIds.filter((id) => state.selected.has(id)).length;
-  els.selectAll.checked = Boolean(visible.length && selectedOnPage === visible.length);
-  els.selectAll.indeterminate = Boolean(selectedOnPage && selectedOnPage < visible.length);
+  syncSelectionUi(visible);
   els.prevPage.disabled = state.page <= 1;
   els.nextPage.disabled = state.page >= totalPages;
   els.pageText.textContent = `${state.page} / ${totalPages}`;
@@ -1010,8 +1022,7 @@ function downloadBlob(fileName, blob) {
 }
 
 function exportableRows() {
-  const selected = selectedRows();
-  return selected.length ? selected : visibleAccountsForCurrentPage();
+  return resolvedMailboxActionRows({ fallback: "none" });
 }
 
 async function syncMailboxes({ quiet = false } = {}) {
@@ -1057,41 +1068,50 @@ async function persistImportedRows(rows) {
   const tempRows = rows.filter((row) => row.source === "temp");
   const genericRows = rows.filter((row) => row.source === "generic");
   const results = [];
-  if (microsoftRows.length) {
-    const response = await fetch("/client-api/accounts/import-pickup", {
-      method: "POST",
-      headers: apiHeaders(),
-      body: JSON.stringify({ text: microsoftRows.map(mailboxCopyLine).join("\n") }),
-    });
-    const data = await readJsonResponse(response, "/client-api/accounts/import-pickup");
-    if (!response.ok) throw new Error(data.error || "Outlook 导入失败");
-    results.push(data);
+  const completedSources = [];
+  try {
+    if (microsoftRows.length) {
+      const response = await fetch("/client-api/accounts/import-pickup", {
+        method: "POST",
+        headers: apiHeaders(),
+        body: JSON.stringify({ text: microsoftRows.map(mailboxCopyLine).join("\n") }),
+      });
+      const data = await readJsonResponse(response, "/client-api/accounts/import-pickup");
+      if (!response.ok) throw new Error(data.error || "Outlook 导入失败");
+      results.push(data);
+      completedSources.push(`Outlook ${microsoftRows.length}`);
+    }
+    if (tempRows.length) {
+      const response = await fetch("/client-api/temp-addresses/import", {
+        method: "POST",
+        headers: apiHeaders(),
+        body: JSON.stringify({
+          text: tempRows.map(mailboxCopyLine).join("\n"),
+          base_url: normalizeTempWorkerUrl(els.tempApi.value),
+          site_password: els.tempSitePassword.value.trim(),
+        }),
+      });
+      const data = await readJsonResponse(response, "/client-api/temp-addresses/import");
+      if (!response.ok) throw new Error(data.error || "临时邮箱导入失败");
+      results.push(data);
+      completedSources.push(`临时邮箱 ${tempRows.length}`);
+    }
+    if (genericRows.length) {
+      const response = await fetch("/client-api/generic-accounts/import", {
+        method: "POST",
+        headers: apiHeaders(),
+        body: JSON.stringify({ text: genericRows.map(mailboxCopyLine).join("\n") }),
+      });
+      const data = await readJsonResponse(response, "/client-api/generic-accounts/import");
+      if (!response.ok) throw new Error(data.error || "其他邮箱导入失败");
+      results.push(data);
+      completedSources.push(`其他邮箱 ${genericRows.length}`);
+    }
+    return { results, completedSources };
+  } catch (error) {
+    error.completedSources = completedSources;
+    throw error;
   }
-  if (tempRows.length) {
-    const response = await fetch("/client-api/temp-addresses/import", {
-      method: "POST",
-      headers: apiHeaders(),
-      body: JSON.stringify({
-        text: tempRows.map(mailboxCopyLine).join("\n"),
-        base_url: normalizeTempWorkerUrl(els.tempApi.value),
-        site_password: els.tempSitePassword.value.trim(),
-      }),
-    });
-    const data = await readJsonResponse(response, "/client-api/temp-addresses/import");
-    if (!response.ok) throw new Error(data.error || "临时邮箱导入失败");
-    results.push(data);
-  }
-  if (genericRows.length) {
-    const response = await fetch("/client-api/generic-accounts/import", {
-      method: "POST",
-      headers: apiHeaders(),
-      body: JSON.stringify({ text: genericRows.map(mailboxCopyLine).join("\n") }),
-    });
-    const data = await readJsonResponse(response, "/client-api/generic-accounts/import");
-    if (!response.ok) throw new Error(data.error || "其他邮箱导入失败");
-    results.push(data);
-  }
-  return results;
 }
 
 function updateImportPreview() {
@@ -1160,9 +1180,13 @@ async function importMailboxes() {
     closeImportModal();
     await syncMailboxes({ quiet: true });
   } catch (error) {
-    const summary = upsertAccounts(rows);
-    setStatus(`本地已保存 ${summary.imported + summary.updated} 个，但同步失败：${error.message}`, "error");
+    const partial = error?.completedSources || [];
+    const partialText = partial.length ? `已写入：${partial.join("，")}。` : "服务端未写入，本地也未保存。";
+    setStatus(`导入失败：${partialText}${error.message}`, "error");
     toast(error.message || "导入同步失败");
+    if (partial.length) {
+      await syncMailboxes({ quiet: true });
+    }
   } finally {
     els.confirmImport.disabled = false;
     els.confirmImport.textContent = "导入并同步";
@@ -1185,9 +1209,9 @@ async function deleteAccounts(accounts) {
     });
     const data = await readJsonResponse(response, "/client-api/accounts/delete");
     if (!response.ok) throw new Error(data.error || "删除失败");
-    const removeIds = new Set(accounts.map((account) => account.id));
-    state.accounts = state.accounts.filter((account) => !removeIds.has(account.id));
-    accounts.forEach((account) => state.selected.delete(account.id));
+    const removeEmails = new Set(emails);
+    state.accounts = state.accounts.filter((account) => !removeEmails.has(String(account.email || "").toLowerCase()));
+    state.selected = new Set([...state.selected].filter((id) => state.accounts.some((account) => account.id === id)));
     invalidateFilteredAccountsCache();
     saveAll();
     setStatus(`已删除 ${data.deleted?.total ?? accounts.length} 个邮箱。`, "ok");
@@ -1200,7 +1224,7 @@ async function deleteAccounts(accounts) {
 }
 
 function setSelectedGroup() {
-  const rows = selectedRows();
+  const rows = resolvedMailboxActionRows();
   if (!rows.length) {
     toast("先选择邮箱");
     return;
@@ -1280,14 +1304,16 @@ els.sideFilters.forEach((button) => {
 });
 
 els.selectAll.addEventListener("change", () => {
-  const rows = filteredAccounts();
-  const pageSize = Number(els.pageSize.value || 50);
-  const visible = rows.slice((state.page - 1) * pageSize, state.page * pageSize);
+  const visible = visibleAccountsForCurrentPage();
   visible.forEach((account) => {
     if (els.selectAll.checked) state.selected.add(account.id);
     else state.selected.delete(account.id);
   });
-  renderTable();
+  visible.forEach((account) => {
+    const checkbox = els.tableBody.querySelector(`tr[data-id="${CSS.escape(account.id)}"] .mailbox-row-check`);
+    if (checkbox) checkbox.checked = state.selected.has(account.id);
+  });
+  syncSelectionUi(visible);
 });
 
 els.tableBody.addEventListener("change", (event) => {
@@ -1297,7 +1323,7 @@ els.tableBody.addEventListener("change", (event) => {
   if (!row?.dataset.id) return;
   if (checkbox.checked) state.selected.add(row.dataset.id);
   else state.selected.delete(row.dataset.id);
-  renderTable();
+  syncSelectionUi();
 });
 
 els.tableBody.addEventListener("click", async (event) => {
@@ -1315,7 +1341,7 @@ els.tableBody.addEventListener("click", async (event) => {
 });
 
 els.copySelected.addEventListener("click", async () => {
-  const rows = selectedRows();
+  const rows = resolvedMailboxActionRows();
   if (!rows.length) {
     toast("先选择邮箱");
     return;
@@ -1324,16 +1350,16 @@ els.copySelected.addEventListener("click", async () => {
 });
 
 els.groupSelected.addEventListener("click", setSelectedGroup);
-els.deleteSelected.addEventListener("click", () => deleteAccounts(selectedRows()));
+els.deleteSelected.addEventListener("click", () => deleteAccounts(resolvedMailboxActionRows()));
 els.exportBtn.addEventListener("click", () => {
   const stamp = new Date().toISOString().replace(/[:.]/g, "-");
   const rows = exportableRows();
   if (!rows.length) {
-    toast("没有可导出的邮箱");
+    toast("请先选中要导出的邮箱");
     return;
   }
   downloadTextFile(`gpt-account-manager-mailboxes-${stamp}.txt`, `${rows.map(mailboxCopyLine).join("\n")}\n`);
-  setStatus(`已按一行一个邮箱导出 ${rows.length} 条（优先当前选中，否则当前页）。`, "ok");
+  setStatus(`已按一行一个邮箱导出 ${rows.length} 条。`, "ok");
   toast(`已导出 ${rows.length} 个邮箱 TXT`);
 });
 els.exportBackupBtn.addEventListener("click", () => {

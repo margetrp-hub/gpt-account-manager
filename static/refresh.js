@@ -118,7 +118,13 @@ const state = {
   runner: null,
   runnerToken: 0,
   manualCodeTarget: null,
+  pollInFlight: false,
   queueMarkup: "",
+  filteredAccountsCacheKey: "",
+  filteredAccountsCacheRows: [],
+  filteredQueueCacheKey: "",
+  filteredQueueCacheRows: [],
+  jobPollErrors: new Map(),
 };
 const pendingSaveTimers = new Map();
 
@@ -129,6 +135,7 @@ const AUTO_RETRYABLE_CODES = new Set([
   "proxy_connection_failed",
   "proxy_tls_eof",
   "proxy_timeout",
+  "job_poll_timeout",
   "proxy_ip_unstable",
   "network_incomplete_read",
   "login_network_blocked",
@@ -411,6 +418,7 @@ const ERROR_MANUAL = {
   proxy_connection_failed: "代理连接失败",
   proxy_tls_eof: "代理 TLS 中断",
   proxy_timeout: "代理超时",
+  job_poll_timeout: "状态轮询超时",
   dns_failed: "DNS 失败",
   mail_credentials_missing: "缺取码邮箱",
   mail_pickup_unavailable: "取码邮箱不可用",
@@ -719,6 +727,28 @@ async function readJsonResponse(response, fallback = "请求失败") {
     throw error;
   }
   return data;
+}
+
+async function fetchJsonWithTimeout(url, options = {}, fallback = "请求失败", timeoutMs = 15000, timeoutErrorCode = "proxy_timeout") {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(new DOMException("timeout", "AbortError")), timeoutMs);
+  try {
+    const response = await fetch(url, {
+      ...options,
+      signal: controller.signal,
+    });
+    const data = await readJsonResponse(response, fallback);
+    return { response, data };
+  } catch (error) {
+    if (error?.name === "AbortError") {
+      const timeoutError = new Error(`${fallback} 超时`);
+      timeoutError.details = { error: timeoutError.message, error_code: timeoutErrorCode };
+      throw timeoutError;
+    }
+    throw error;
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 function sleep(ms) {
@@ -1152,24 +1182,54 @@ function proxyFormatError(value) {
 }
 
 function failRow(row, details) {
+  commitQueueRowFailure(row, rowState(row), details, { render: true, log: true });
+}
+
+function renderRefreshStateViews() {
+  renderQueue();
+  renderSources();
+  renderSelectedPhoneCodePanel();
+}
+
+function renderRefreshQueueViews() {
+  renderQueue();
+  renderSelectedPhoneCodePanel();
+}
+
+function renderForJobOutcome(outcome) {
+  if (!outcome?.applied) return;
+  if (outcome.accountChanged || outcome.statusTerminal) {
+    renderRefreshStateViews();
+    return;
+  }
+  if (outcome.jobChanged || outcome.logChanged) {
+    renderRefreshQueueViews();
+  }
+}
+
+function commitQueueRowFailure(row, current, details, { render = true, log = true } = {}) {
   row.status = "failed";
   row.error = details.error || "启动失败";
   row.error_code = details.error_code || "";
   row.error_hint = details.error_hint || "";
   row.retryable = details.retryable;
   state.jobs.set(row.id, {
+    ...current,
     status: "failed",
-    jobId: row.jobId || "",
+    jobId: row.jobId || current.jobId || "",
     error: row.error,
     error_code: row.error_code,
     error_hint: row.error_hint,
     retryable: row.retryable,
-    logs: row.logs || [],
+    logs: row.logs || current.logs || [],
   });
   saveQueue();
-  renderQueue();
-  renderSources();
-  addLog(`${row.email} ${formatJobError(rowState(row))}`, "error");
+  if (render) {
+    renderRefreshStateViews();
+  }
+  if (log) {
+    addLog(`${row.email} ${formatJobError(rowState(row))}`, "error");
+  }
 }
 
 function saveSettings() {
@@ -1292,6 +1352,7 @@ function normalizePhonePool(value) {
 }
 
 function saveQueue() {
+  invalidateQueueRowsCache();
   scheduleSaveJson(STORAGE_KEYS.refreshQueue, state.queue.map(compactQueueRowForStorage));
 }
 
@@ -1380,17 +1441,41 @@ function accountOptions(active) {
   }).join("");
 }
 
+function invalidateSourceAccountsCache() {
+  state.filteredAccountsCacheKey = "";
+  state.filteredAccountsCacheRows = [];
+}
+
+function sourceAccountsCacheKey() {
+  return JSON.stringify([
+    state.accounts.length,
+    state.accounts[0]?.id || "",
+    state.accounts[state.accounts.length - 1]?.id || "",
+    els.sourceSearch?.value.trim().toLowerCase() || "",
+    els.sourceType?.value || "all",
+    els.sourceCategory?.value || "all",
+    state.queue.length,
+    state.queue.map((row) => `${accountEmailKey(row.email || row.name)}:${rowState(row).status || "idle"}:${Boolean(row.auth_file)}`).join("|"),
+    Array.from(state.savedRefreshResults.keys()).sort().join("|"),
+  ]);
+}
+
 function filteredAccounts() {
+  const cacheKey = sourceAccountsCacheKey();
+  if (cacheKey === state.filteredAccountsCacheKey) return state.filteredAccountsCacheRows;
   const query = els.sourceSearch.value.trim().toLowerCase();
   const type = els.sourceType.value;
   const category = els.sourceCategory.value;
-  return state.accounts.filter((account) => {
+  const rows = state.accounts.filter((account) => {
     if (type !== "all" && account.source !== type) return false;
     const refreshState = sourceRefreshState(account);
     if (category !== "all" && refreshState.status !== category) return false;
     if (query && !String(account.email || "").toLowerCase().includes(query)) return false;
     return true;
   });
+  state.filteredAccountsCacheKey = cacheKey;
+  state.filteredAccountsCacheRows = rows;
+  return rows;
 }
 
 function visibleSourceAccountsForCurrentPage() {
@@ -1619,6 +1704,7 @@ async function verifySelectedMailboxes() {
         });
       }
     }
+    invalidateSourceAccountsCache();
     saveJson(STORAGE_KEYS.accounts, state.accounts);
     renderSources();
     toast(`验证完成：可用 ${ok + noCode}，失败 ${failed}`);
@@ -1702,7 +1788,7 @@ async function removeSelectedSources() {
   state.queue = state.queue.filter((row) => !removedRowIds.has(row.id));
   state.selectedQueue = new Set([...state.selectedQueue].filter((id) => state.queue.some((row) => row.id === id)));
   saveQueue();
-  renderAll();
+  renderRefreshStateViews();
   toast(`已移出队列 ${removedRows.length} 个账号`);
   addLog(`移出刷新队列：${removedRows.length} 个，邮箱管理资料未删除`, "success");
 }
@@ -1720,6 +1806,44 @@ function rowState(row) {
 
 function isQueueRowTracked(rowId) {
   return state.queue.some((row) => row.id === rowId);
+}
+
+function clearJobPollError(rowId) {
+  state.jobPollErrors.delete(rowId);
+}
+
+function pollErrorState(rowId) {
+  const current = state.jobPollErrors.get(rowId);
+  return current ? { ...current } : { count: 0, lastMessage: "", loggedKey: "" };
+}
+
+function rememberJobPollError(row, details, current) {
+  const next = pollErrorState(row.id);
+  const message = String(details?.error || "读取任务失败");
+  next.count += 1;
+  next.lastMessage = message;
+  state.jobPollErrors.set(row.id, next);
+  const effectiveErrorCode = details?.error_code || inferErrorCode(details || {}) || "job_poll_failed";
+  if (next.loggedKey !== `${effectiveErrorCode}:${message}`) {
+    addLog(`${row.email} 状态轮询异常：${errorCodeLabel(effectiveErrorCode)}`, "warning", {
+      error_code: effectiveErrorCode,
+      email: row.email,
+      step: "status_poll",
+      hint: details?.error_hint || message,
+    });
+    next.loggedKey = `${effectiveErrorCode}:${message}`;
+    state.jobPollErrors.set(row.id, next);
+  }
+  state.jobs.set(row.id, {
+    ...current,
+    status: current.status || row.status || "running",
+    jobId: current.jobId || row.jobId || "",
+    error: current.error || "",
+    error_code: current.error_code || "",
+    error_hint: current.error_hint || "",
+    logs: current.logs || row.logs || [],
+  });
+  return next;
 }
 
 function loginLabel(status) {
@@ -1758,12 +1882,34 @@ function queueFilterStatus(row) {
   return status;
 }
 
+function invalidateQueueRowsCache() {
+  state.filteredQueueCacheKey = "";
+  state.filteredQueueCacheRows = [];
+}
+
+function queueRowsCacheKey() {
+  return JSON.stringify([
+    state.queue.length,
+    state.queue[0]?.id || "",
+    state.queue[state.queue.length - 1]?.id || "",
+    state.queueFilter || "all",
+    state.queue.map((row) => `${row.id}:${rowState(row).status || "idle"}`).join("|"),
+  ]);
+}
+
 function queueRowsForCurrentFilter() {
+  const cacheKey = queueRowsCacheKey();
+  if (cacheKey === state.filteredQueueCacheKey) return state.filteredQueueCacheRows;
+  let rows;
   if (state.queueFilter === "all") return state.queue;
   if (state.queueFilter === "running") {
-    return state.queue.filter((row) => ["queued", "running"].includes(rowState(row).status || "idle"));
+    rows = state.queue.filter((row) => ["queued", "running"].includes(rowState(row).status || "idle"));
+  } else {
+    rows = state.queue.filter((row) => queueFilterStatus(row) === state.queueFilter);
   }
-  return state.queue.filter((row) => queueFilterStatus(row) === state.queueFilter);
+  state.filteredQueueCacheKey = cacheKey;
+  state.filteredQueueCacheRows = rows;
+  return rows;
 }
 
 function renderQueueProgress(counts) {
@@ -1789,7 +1935,7 @@ function renderQueue() {
   });
   els.queueTotal.textContent = String(state.queue.length);
   els.queueIdle.textContent = String((counts.idle || 0) + (counts.queued || 0));
-  els.queueRunning.textContent = String((counts.queued || 0) + (counts.running || 0));
+  els.queueRunning.textContent = String(counts.running || 0);
   els.queueSuccess.textContent = String(counts.success || 0);
   els.queueFailed.textContent = String(counts.failed || 0);
   renderQueueProgress(counts);
@@ -1836,7 +1982,7 @@ function renderQueue() {
         <td><div class="login-error" title="${escapeHtml(errorText)}">${escapeHtml(errorText)}</div></td>
         <td>
           <div class="queue-action-stack">
-            <button class="login-one" type="button" ${["queued", "running"].includes(rawStatus) ? "disabled" : ""}>${rawStatus === "queued" ? "排队中" : rawStatus === "running" ? "执行中" : "执行"}</button>
+            <button class="login-one" type="button" ${["queued", "running"].includes(rawStatus) ? "disabled" : ""}>${rawStatus === "queued" ? "等待中" : rawStatus === "running" ? "执行中" : "执行"}</button>
             ${canManualCode ? '<button class="code-one" type="button">填码</button>' : ""}
             ${["queued", "running"].includes(rawStatus) ? '<button class="cancel-one" type="button">终止</button>' : ""}
           </div>
@@ -1850,23 +1996,22 @@ function renderQueue() {
   }
 }
 
-function selectedQueueRows({ failedOnly = false, fallback = "all" } = {}) {
-  const visibleIds = new Set(queueRowsForCurrentFilter().map((row) => row.id));
+function selectedQueueRows({ failedOnly = false, fallback = "filtered" } = {}) {
+  const filteredRows = queueRowsForCurrentFilter();
+  const visibleIds = new Set(filteredRows.map((row) => row.id));
   const selected = state.queue.filter((row) => state.selectedQueue.has(row.id) && visibleIds.has(row.id));
+  const failedFilter = (rows) => rows.filter((row) => rowState(row).status === "failed");
   if (failedOnly) {
-    const selectedFailed = selected.filter((row) => rowState(row).status === "failed");
+    const selectedFailed = failedFilter(selected);
     if (selectedFailed.length) return selectedFailed;
     if (fallback === "none") return [];
-    const filteredFailed = queueRowsForCurrentFilter().filter((row) => rowState(row).status === "failed");
-    if (filteredFailed.length) return filteredFailed;
-    return state.queue.filter((row) => rowState(row).status === "failed");
+    if (fallback === "all") return failedFilter(state.queue);
+    return failedFilter(filteredRows);
   }
   if (selected.length) return selected;
   if (fallback === "none") return [];
-  const queued = state.queue.filter((row) => rowState(row).status === "queued");
-  if (queued.length) return queued;
-  const filtered = queueRowsForCurrentFilter();
-  return filtered.length ? filtered : state.queue;
+  if (fallback === "all") return state.queue;
+  return filteredRows;
 }
 
 function markRowsQueued(rows) {
@@ -2379,11 +2524,7 @@ async function pollSelectedPhoneCode() {
 }
 
 function failedRowsForCleanup() {
-  const base = state.selectedQueue.size
-    ? state.queue.filter((row) => state.selectedQueue.has(row.id))
-    : queueRowsForCurrentFilter();
-  const scoped = base.length ? base : state.queue;
-  return scoped.filter((row) => rowState(row).status === "failed");
+  return selectedQueueRows({ failedOnly: true, fallback: "none" });
 }
 
 function cpaDeleteGroups(rows) {
@@ -2434,8 +2575,8 @@ async function deleteCpaRows(rows) {
 async function cleanFailedRows() {
   const rows = failedRowsForCleanup();
   if (!rows.length) {
-    toast("没有可清理的失败账号");
-    addLog("没有可清理的失败账号", "warning");
+    toast("请先选中要清理的失败账号");
+    addLog("请先选中要清理的失败账号", "warning");
     return;
   }
   const counts = rows.reduce((acc, row) => {
@@ -2444,8 +2585,7 @@ async function cleanFailedRows() {
     return acc;
   }, {});
   const summary = Object.entries(counts).map(([code, count]) => `${errorCodeLabel(code)} ${count}`).join("，");
-  const selectedHint = state.selectedQueue.size ? "选中的失败账号" : (state.queueFilter === "failed" ? "当前失败列表" : "全部失败账号");
-  if (!confirm(`将清理 ${rows.length} 个${selectedHint}：${summary}\n\n只会从 CPA 和凭证刷新队列移除，不会删除邮箱管理里的邮箱资料。继续？`)) {
+  if (!confirm(`将清理 ${rows.length} 个选中的失败账号：${summary}\n\n只会从 CPA 和凭证刷新队列移除，不会删除邮箱管理里的邮箱资料。继续？`)) {
     return;
   }
   let cpaDeleted = 0;
@@ -2462,7 +2602,7 @@ async function cleanFailedRows() {
     state.selectedQueue.delete(row.id);
   });
   saveQueue();
-  renderAll();
+  renderRefreshStateViews();
   addLog(`清理完成：队列 ${rows.length}，CPA ${cpaDeleted}，邮箱管理资料未删除`, "success");
   toast(`已清理 ${rows.length} 个失败账号`);
 }
@@ -2645,12 +2785,11 @@ async function cancelLoginJob(row) {
   const jobId = row.jobId || current.jobId || "";
   if (!jobId) {
     if (!isQueueRowTracked(row.id)) return;
-    row.status = "failed";
-    row.error = "任务已终止";
-    row.error_code = "login_cancelled";
-    state.jobs.set(row.id, { ...current, status: "failed", error: row.error, error_code: row.error_code, retryable: false });
-    saveQueue();
-    renderQueue();
+    commitQueueRowFailure(row, current, {
+      error: "任务已终止",
+      error_code: "login_cancelled",
+      retryable: false,
+    }, { render: true, log: false });
     return;
   }
   const response = await fetch("/client-api/cpa/login-cancel", {
@@ -2664,9 +2803,9 @@ async function cancelLoginJob(row) {
     throw new Error(details.error || "终止失败");
   }
   if (!isQueueRowTracked(row.id)) return;
-  applyJobToRow(row, data.job || {}, current);
+  const outcome = applyJobToRow(row, data.job || {}, current);
   addLog(`${row.email} 任务已终止`, "warning", { step: "cancel", email: row.email });
-  renderAll();
+  renderForJobOutcome(outcome);
 }
 
 function addLog(message, type = "info", meta = {}) {
@@ -2837,8 +2976,10 @@ async function preflightMailPickup(row, payload) {
 }
 
 function applyJobToRow(row, job, current = rowState(row)) {
-  if (!isQueueRowTracked(row.id)) return false;
+  if (!isQueueRowTracked(row.id)) return { applied: false, changed: false };
+  clearJobPollError(row.id);
   const oldCount = current.logs?.length || 0;
+  const newLogCount = Math.max(0, (job.logs || []).length - oldCount);
   (job.logs || []).slice(oldCount).forEach((entry) => {
     addLog(`${row.email} ${entry.message || ""}`, entry.level || "info", {
       ...entry,
@@ -2848,30 +2989,8 @@ function applyJobToRow(row, job, current = rowState(row)) {
 
   const result = job.result || {};
   const authFile = result.auth_file || result.result?.auth_file || null;
-  if (authFile && typeof authFile === "object") {
-    row.auth_file = authFile;
-    const account = accountForRow(row);
-    if (account) {
-      account.auth_file = authFile;
-      account.access_token = authFile.access_token || account.access_token || "";
-      account.refresh_token = authFile.refresh_token || account.refresh_token || "";
-      account.id_token = authFile.id_token || account.id_token || "";
-      account.session_token = authFile.session_token || account.session_token || "";
-      account.account_id = authFile.account_id || authFile.chatgpt_account_id || account.account_id || "";
-      account.chatgpt_account_id = authFile.chatgpt_account_id || authFile.account_id || account.chatgpt_account_id || "";
-      account.plan_type = authFile.plan_type || authFile.chatgpt_plan_type || account.plan_type || "";
-      account.last_refresh = authFile.last_refresh || new Date().toISOString();
-    }
-  }
-
   const regPassword = result.registration_password || result.result?.registration_password;
-  if (regPassword) {
-    row.password = regPassword;
-    const account = accountForRow(row);
-    if (account) {
-      account.password = regPassword;
-    }
-  }
+  const accountChanged = applyJobAccountResult(row, authFile, regPassword);
 
   row.status = job.status || "running";
   row.error = job.error || "";
@@ -2883,9 +3002,19 @@ function applyJobToRow(row, job, current = rowState(row)) {
   row.error_hint = job.error_hint || "";
   row.retryable = job.retryable;
   row.logs = job.logs || [];
+  const nextJobId = current.jobId || row.jobId || job.job_id || "";
+  const jobChanged = (
+    row.status !== current.status
+    || row.error !== current.error
+    || row.error_code !== current.error_code
+    || row.error_hint !== current.error_hint
+    || row.retryable !== current.retryable
+    || nextJobId !== current.jobId
+    || row.logs.length !== (current.logs?.length || 0)
+  );
   state.jobs.set(row.id, {
     status: row.status,
-    jobId: current.jobId || row.jobId || job.job_id || "",
+    jobId: nextJobId,
     error: row.error,
     error_code: row.error_code,
     error_hint: row.error_hint,
@@ -2899,9 +3028,122 @@ function applyJobToRow(row, job, current = rowState(row)) {
       auth_file: row.auth_file,
     });
   }
-  saveJson(STORAGE_KEYS.accounts, state.accounts);
-  saveQueue();
-  return true;
+  if (accountChanged) {
+    saveJson(STORAGE_KEYS.accounts, state.accounts);
+  }
+  if (jobChanged || accountChanged) {
+    saveQueue();
+  }
+  return {
+    applied: true,
+    changed: Boolean(jobChanged || accountChanged),
+    jobChanged: Boolean(jobChanged),
+    accountChanged: Boolean(accountChanged),
+    logChanged: newLogCount > 0,
+    statusTerminal: ["success", "failed"].includes(row.status),
+  };
+}
+
+function stableComparableJson(value) {
+  if (!value || typeof value !== "object") return JSON.stringify(value ?? null);
+  if (Array.isArray(value)) return JSON.stringify(value.map((item) => JSON.parse(stableComparableJson(item))));
+  const sorted = Object.keys(value).sort().reduce((acc, key) => {
+    acc[key] = JSON.parse(stableComparableJson(value[key]));
+    return acc;
+  }, {});
+  return JSON.stringify(sorted);
+}
+
+function applyJobAccountResult(row, authFile, regPassword) {
+  let changed = false;
+  const account = accountForRow(row);
+  if (authFile && typeof authFile === "object") {
+    const nextAuthJson = stableComparableJson(authFile);
+    const prevAuthJson = stableComparableJson(row.auth_file || null);
+    if (nextAuthJson !== prevAuthJson) {
+      row.auth_file = authFile;
+      changed = true;
+    }
+    if (account) {
+      const prevAccountAuthJson = stableComparableJson(account.auth_file || null);
+      if (nextAuthJson !== prevAccountAuthJson) {
+        account.auth_file = authFile;
+        account.access_token = authFile.access_token || account.access_token || "";
+        account.refresh_token = authFile.refresh_token || account.refresh_token || "";
+        account.id_token = authFile.id_token || account.id_token || "";
+        account.session_token = authFile.session_token || account.session_token || "";
+        account.account_id = authFile.account_id || authFile.chatgpt_account_id || account.account_id || "";
+        account.chatgpt_account_id = authFile.chatgpt_account_id || authFile.account_id || account.chatgpt_account_id || "";
+        account.plan_type = authFile.plan_type || authFile.chatgpt_plan_type || account.plan_type || "";
+        account.last_refresh = authFile.last_refresh || new Date().toISOString();
+        changed = true;
+      }
+    }
+  }
+  if (regPassword) {
+    if (row.password !== regPassword) {
+      row.password = regPassword;
+      changed = true;
+    }
+    if (account) {
+      if (account.password !== regPassword) {
+        account.password = regPassword;
+        changed = true;
+      }
+    }
+  }
+  return changed;
+}
+
+function stopPolling() {
+  if (typeof state.poller?.stop === "function") state.poller.stop();
+  else if (state.poller) clearInterval(state.poller);
+  state.poller = undefined;
+}
+
+function shouldUseRecoveryPolling() {
+  return state.queue.some((row) => {
+    const current = rowState(row);
+    return ["queued", "running"].includes(current.status) && Boolean(current.jobId || row.jobId);
+  });
+}
+
+async function fetchLoginJobStatus(jobId, fallback = "读取任务失败") {
+  const { response, data } = await fetchJsonWithTimeout(`/client-api/cpa/login-status?job_id=${encodeURIComponent(jobId)}`, {
+    headers: apiHeaders(),
+    cache: "no-store",
+  }, fallback, 12000, "job_poll_timeout");
+  if (!data.success) {
+    const details = parseErrorPayload(data, fallback);
+    const error = new Error(details.error || fallback);
+    error.details = details;
+    throw error;
+  }
+  return { response, data, job: data.job || {} };
+}
+
+function finishJobFailureLog(row) {
+  addLog(`${row.email} ${formatJobError(rowState(row))}`, "error", {
+    error_code: row.error_code || "login_failed",
+    email: row.email,
+  });
+}
+
+async function syncLoginJobRow(row, current = rowState(row), { fallback = "读取任务失败", render = true } = {}) {
+  if (!current.jobId) return { state: "missing_job_id", outcome: null, current };
+  const { job } = await fetchLoginJobStatus(current.jobId, fallback);
+  const outcome = applyJobToRow(row, job, current);
+  if (!outcome.applied) return { state: "removed", outcome, current };
+  if (render) renderForJobOutcome(outcome);
+  const terminal = ["success", "failed"].includes(row.status);
+  if (terminal && row.status === "failed") {
+    finishJobFailureLog(row);
+  }
+  return {
+    state: terminal ? row.status : "running",
+    outcome,
+    current: rowState(row),
+  };
 }
 
 async function waitForJob(row, jobId) {
@@ -2909,29 +3151,9 @@ async function waitForJob(row, jobId) {
     await sleep(2000);
     if (!isQueueRowTracked(row.id)) return "removed";
     const current = rowState(row);
-    const response = await fetch(`/client-api/cpa/login-status?job_id=${encodeURIComponent(jobId)}`, { headers: apiHeaders(), cache: "no-store" });
-    const data = await readJsonResponse(response, "读取任务失败");
-    if (!data.success) {
-      const details = parseErrorPayload(data, "读取任务失败");
-      const error = new Error(details.error || "读取任务失败");
-      error.details = details;
-      throw error;
-      }
-      const job = data.job || {};
-      const applied = applyJobToRow(row, job, current);
-      if (!applied) return "removed";
-      renderSources();
-      renderQueue();
-      renderSelectedPhoneCodePanel();
-    if (["success", "failed"].includes(row.status)) {
-      if (row.status === "failed") {
-        addLog(`${row.email} ${formatJobError(rowState(row))}`, "error", {
-          error_code: row.error_code || "login_failed",
-          email: row.email,
-        });
-      }
-      return row.status;
-    }
+    if ((current.jobId || row.jobId || "") !== jobId) return "replaced";
+    const result = await syncLoginJobRow(row, current, { fallback: "读取任务失败", render: true });
+    if (result.state !== "running") return result.state;
   }
 }
 
@@ -2990,6 +3212,7 @@ async function startLogin(row) {
       row.jobId = data.job?.job_id || "";
       row.status = data.job?.status || "queued";
       state.jobs.set(row.id, { status: row.status, jobId: row.jobId, error: "", logs: [] });
+      clearJobPollError(row.id);
       saveQueue();
       queueManualEmailCodeSubmit(row);
       if (row.jobId) {
@@ -3065,12 +3288,13 @@ async function runQueuedRows(runToken) {
     if (state.runnerToken === runToken) {
       state.runner = null;
     }
-    renderAll();
+    startPolling();
+    renderRefreshStateViews();
   }
 }
 
 function startPolling() {
-  if (state.poller) return;
+  if (state.runner || state.poller || !shouldUseRecoveryPolling()) return;
   if (scheduler?.createPollLoop) {
     state.poller = scheduler.createPollLoop(pollJobs, { intervalMs: 2000 });
     state.poller.start();
@@ -3080,51 +3304,56 @@ function startPolling() {
 }
 
 async function pollJobs() {
+  if (state.pollInFlight) return;
+  state.pollInFlight = true;
   const pending = state.queue.filter((row) => ["queued", "running"].includes(rowState(row).status));
   if (!pending.length) {
-    if (typeof state.poller?.stop === "function") state.poller.stop();
-    else clearInterval(state.poller);
-    state.poller = undefined;
+    stopPolling();
+    state.pollInFlight = false;
     return;
   }
-  for (const row of pending) {
-    const current = rowState(row);
-    if (!current.jobId) continue;
-    try {
-      const response = await fetch(`/client-api/cpa/login-status?job_id=${encodeURIComponent(current.jobId)}`, { headers: apiHeaders(), cache: "no-store" });
-      const data = await readJsonResponse(response, "读取任务失败");
-      if (!data.success) {
-        const details = parseErrorPayload(data, "读取任务失败");
-        const error = new Error(details.error || "读取任务失败");
-        error.details = details;
-        throw error;
+  try {
+    let refreshMode = "";
+    for (const row of pending) {
+      const current = rowState(row);
+      if (!current.jobId) continue;
+      try {
+        const result = await syncLoginJobRow(row, current, { fallback: "读取任务失败", render: false });
+        const outcome = result.outcome;
+        if (!outcome?.applied) continue;
+        if (outcome.accountChanged || outcome.statusTerminal) {
+          refreshMode = "state";
+        } else if (!refreshMode && (outcome.jobChanged || outcome.logChanged)) {
+          refreshMode = "queue";
+        }
+      } catch (error) {
+        const details = error.details || { error: error.message || "读取任务失败", error_code: "login_failed" };
+        const pollError = rememberJobPollError(row, details, current);
+        const retryable = shouldAutoRetry(details);
+        if (!retryable) {
+          failRow(row, {
+            error: details.error || "状态轮询失败",
+            error_code: details.error_code || inferErrorCode(details || {}) || "job_poll_failed",
+            error_hint: details.error_hint || "恢复轮询无法继续读取任务状态，已按失败处理。",
+            retryable: false,
+          });
+          refreshMode = "state";
+        } else if (pollError.count >= 3) {
+          failRow(row, {
+            error: details.error || "状态轮询连续失败",
+            error_code: details.error_code || inferErrorCode(details || {}) || "job_poll_failed",
+            error_hint: details.error_hint || "连续多次无法读取任务状态，请检查代理或网络后重试。",
+            retryable: true,
+          });
+          refreshMode = "state";
+        }
       }
-      const job = data.job || {};
-      applyJobToRow(row, job, current);
-    } catch (error) {
-      row.status = "failed";
-      const details = error.details || { error: error.message || "读取任务失败", error_code: "login_failed" };
-      row.error = details.error || "读取任务失败";
-      row.error_code = details.error_code || "login_failed";
-      row.error_hint = details.error_hint || "";
-      state.jobs.set(row.id, {
-        status: "failed",
-        jobId: current.jobId,
-        error: row.error,
-        error_code: row.error_code,
-        error_hint: row.error_hint,
-        logs: current.logs || [],
-      });
-      addLog(`${row.email} ${formatJobError(rowState(row))}`, "error", {
-        error_code: row.error_code,
-        email: row.email,
-      });
-      saveQueue();
     }
+    if (refreshMode === "state") renderRefreshStateViews();
+    else if (refreshMode === "queue") renderRefreshQueueViews();
+  } finally {
+    state.pollInFlight = false;
   }
-  renderSources();
-  renderQueue();
-  renderSelectedPhoneCodePanel();
 }
 
 function accountSub2apiItem(row, authFile) {
@@ -3205,7 +3434,7 @@ async function syncRefreshResults() {
 }
 
 async function exportResults(format) {
-  const selected = selectedQueueRows();
+  const selected = selectedQueueRows({ fallback: "filtered" });
   let rows = selected.map((row) => ({ row, authFile: row.auth_file })).filter((item) => item.authFile);
   if (!rows.length) {
     rows = await savedRefreshRows();
@@ -3235,16 +3464,10 @@ async function manualUploadCpaResults() {
     toast("请先填写 CPA 地址和管理密钥");
     return;
   }
-  let rows = selectedQueueRows().map((row) => ({ row, authFile: row.auth_file })).filter((item) => item.authFile);
+  let rows = selectedQueueRows({ fallback: "none" }).map((row) => ({ row, authFile: row.auth_file })).filter((item) => item.authFile);
   if (!rows.length) {
-    rows = state.queue.map((row) => ({ row, authFile: row.auth_file })).filter((item) => item.authFile);
-  }
-  if (!rows.length) {
-    rows = await savedRefreshRows();
-  }
-  if (!rows.length) {
-    setCpaSyncStatus("没有可上传的凭证结果", "warning");
-    toast("没有可上传的凭证结果");
+    setCpaSyncStatus("请先选中要上传的成功账号", "warning");
+    toast("请先选中要上传的成功账号");
     return;
   }
   if (els.manualUploadCpa) els.manualUploadCpa.disabled = true;
@@ -3441,7 +3664,7 @@ async function syncTempCredentialsForQueue() {
     const ok = results.filter((item) => item?.ok && item?.jwt);
     const imported = mergeTempJwtResults(ok, baseUrl, sitePassword);
     const failed = results.length - ok.length;
-    renderAll();
+    renderSources();
     toast(`同步完成：${imported.length} 个`);
     addLog(`临时邮箱同步完成：成功 ${imported.length}，失败 ${Math.max(0, failed)}`, imported.length ? "success" : "warning");
     results
@@ -3496,7 +3719,7 @@ async function importPickupCredentials() {
         error_code: "pickup_import_failed",
       });
     }
-    renderAll();
+    renderSources();
     closePickupImportModal();
     const summary = results.map((item) => {
       const imported = Number(item.data?.imported || 0);
@@ -3551,6 +3774,7 @@ function mergeServerAccountsSnapshot(items) {
     }
   });
   state.accounts = [...byId.values()].sort((a, b) => String(a.email || "").localeCompare(String(b.email || "")));
+  invalidateSourceAccountsCache();
 }
 
 async function syncAccountsFromServer({ quiet = false } = {}) {
@@ -3582,9 +3806,10 @@ async function syncAccountsFromServer({ quiet = false } = {}) {
     if (syncedAccounts.length || serverManagedBeforeIds.size) {
       const serverIds = new Set(syncedAccounts.map((account) => account.id));
       state.accounts = state.accounts.filter((account) => !serverManagedBeforeIds.has(account.id) || serverIds.has(account.id));
+      invalidateSourceAccountsCache();
     }
     saveJson(STORAGE_KEYS.accounts, state.accounts);
-    renderAll();
+    renderSources();
   } catch (error) {
     if (!quiet) addLog(`同步邮箱助手资料失败：${error.message || "unknown"}`, "warning");
   }
@@ -3692,14 +3917,18 @@ els.queueBody.addEventListener("click", (event) => {
   const rowEl = button.closest("tr");
   const item = state.queue.find((row) => row.id === rowEl?.dataset.id);
   if (!item) return;
+  if (!state.runner) {
+    startRows([item]);
+    return;
+  }
   const queued = markRowsQueued([item]);
   if (queued) {
     addLog(`${item.email} 已加入等待队列`, "info", { step: "queue", email: item.email });
-    toast(state.runner ? "已加入队列，将按顺序执行" : "已加入队列，请点击执行选中启动");
+    toast("已加入队列，将按顺序执行");
   }
 });
 els.startSelected.addEventListener("click", () => startRows(selectedQueueRows({ fallback: "none" })));
-els.retryFailed.addEventListener("click", () => startRows(selectedQueueRows({ failedOnly: true })));
+els.retryFailed.addEventListener("click", () => startRows(selectedQueueRows({ failedOnly: true, fallback: "none" })));
 if (els.cleanFailed) {
   els.cleanFailed.addEventListener("click", cleanFailedRows);
 }
@@ -3837,3 +4066,4 @@ renderAll();
 updatePickupImportPreview();
 syncAccountsFromServer();
 syncRefreshResults();
+startPolling();

@@ -35,6 +35,26 @@ class PreparedMailFetchRequest:
         return len(self.jobs)
 
 
+@dataclass
+class PreparedSavedWorkspaceMailFetch:
+    accounts: dict[str, Any]
+    temp_addresses: dict[str, Any]
+    generic_accounts: dict[str, Any]
+    jobs: list[tuple[str, Any, str, int, str]]
+
+    @property
+    def total_targets(self) -> int:
+        return len(self.jobs)
+
+
+@dataclass
+class SavedWorkspaceMailFetchResult:
+    accounts: dict[str, Any]
+    temp_addresses: dict[str, Any]
+    generic_accounts: dict[str, Any]
+    result: dict[str, Any]
+
+
 @dataclass(frozen=True)
 class MailFetchService:
     coerce_text: TextCoercer
@@ -213,12 +233,20 @@ class MailFetchService:
         progress_callback: Callable[[dict[str, Any]], None] | None = None,
     ) -> dict[str, Any]:
         results = self.run_mail_fetch_jobs(prepared.jobs, progress_callback=progress_callback)
+        return self.build_fetch_result(results, errors=prepared.errors)
+
+    def build_fetch_result(
+        self,
+        results: list[dict[str, Any]],
+        *,
+        errors: list[str] | None = None,
+    ) -> dict[str, Any]:
         messages = [message for result in results for message in result.get("messages", [])]
         failed_results = [result for result in results if not result.get("ok")]
         return {
             "results": results,
             "messages": sorted(messages, key=self.message_sort_value, reverse=True),
-            "errors": prepared.errors,
+            "errors": list(errors or []),
             "summary": {
                 "total": len(results),
                 "ok": len(results) - len(failed_results),
@@ -234,3 +262,75 @@ class MailFetchService:
         progress_callback: Callable[[dict[str, Any]], None] | None = None,
     ) -> dict[str, Any]:
         return self.fetch_prepared(self.prepare_request(payload), progress_callback=progress_callback)
+
+    def fetch_prepared_saved_workspace(
+        self,
+        prepared: PreparedSavedWorkspaceMailFetch,
+        progress_callback: Callable[[dict[str, Any]], None] | None = None,
+    ) -> dict[str, Any]:
+        results = self.run_mail_fetch_jobs(prepared.jobs, progress_callback=progress_callback)
+        return self.build_fetch_result(results)
+
+    def fetch_saved_workspace(
+        self,
+        payload: dict[str, Any],
+        *,
+        accounts: dict[str, Any],
+        temp_addresses: dict[str, Any],
+        generic_accounts: dict[str, Any],
+        progress_callback: Callable[[dict[str, Any]], None] | None = None,
+    ) -> SavedWorkspaceMailFetchResult:
+        prepared = self.prepare_saved_workspace_request(
+            payload,
+            accounts=accounts,
+            temp_addresses=temp_addresses,
+            generic_accounts=generic_accounts,
+        )
+        return SavedWorkspaceMailFetchResult(
+            accounts=prepared.accounts,
+            temp_addresses=prepared.temp_addresses,
+            generic_accounts=prepared.generic_accounts,
+            result=self.fetch_prepared_saved_workspace(prepared, progress_callback=progress_callback),
+        )
+
+    def prepare_saved_workspace_request(
+        self,
+        payload: dict[str, Any],
+        *,
+        accounts: dict[str, Any],
+        temp_addresses: dict[str, Any],
+        generic_accounts: dict[str, Any],
+    ) -> PreparedSavedWorkspaceMailFetch:
+        selected = [
+            self.coerce_text(email).lower()
+            for email in payload.get("emails", [])
+            if "@" in self.coerce_text(email)
+        ]
+        provider = self.coerce_text(payload.get("provider") or "auto").lower()
+        sender_filter = self.coerce_text(payload.get("sender_filter"))
+        limit = max(1, min(int(payload.get("limit", 8) or 8), 30))
+        source = self.coerce_text(payload.get("source") or "microsoft").lower()
+
+        jobs: list[tuple[str, Any, str, int, str]] = []
+        if source in {"microsoft", "all"}:
+            for key, account in accounts.items():
+                if selected and key not in selected:
+                    continue
+                jobs.append(("microsoft", account, provider, limit, sender_filter))
+        if source in {"temp", "all"}:
+            for key, address in temp_addresses.items():
+                if selected and key not in selected:
+                    continue
+                jobs.append(("temp", address, provider, limit, sender_filter))
+        if source in {"generic", "all"}:
+            for key, account in generic_accounts.items():
+                if selected and key not in selected:
+                    continue
+                jobs.append(("generic", account, provider, limit, sender_filter))
+
+        return PreparedSavedWorkspaceMailFetch(
+            accounts=accounts,
+            temp_addresses=temp_addresses,
+            generic_accounts=generic_accounts,
+            jobs=jobs,
+        )

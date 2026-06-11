@@ -86,6 +86,7 @@ from dashboard_stats import (
     dashboard_message_recipient as build_dashboard_message_recipient,
     dashboard_stats_response as build_dashboard_stats_response,
 )
+from message_query_service import MessageQueryService
 from mail_fetch_service import MailFetchService
 from mailbox_workspace_service import MailboxWorkspaceService
 from workspace_state import WorkspaceState
@@ -616,44 +617,95 @@ def upsert_messages(incoming: list[dict[str, Any]], path: Path = MESSAGES_FILE) 
     )
 
 
-def cached_messages_response(path: Path, payload: dict[str, Any], *, limit: int = 80, offset: int = 0) -> dict[str, Any]:
-    try:
-        limit = max(1, min(int(limit or 80), 500))
-    except (TypeError, ValueError):
-        limit = 80
-    try:
-        offset = max(0, int(offset or 0))
-    except (TypeError, ValueError):
-        offset = 0
-    messages = filter_messages(load_messages(path), payload)
-    return {
-        "success": True,
-        "messages": messages[offset:offset + limit],
-        "count": len(messages),
-        "offset": offset,
-        "limit": limit,
-        "types": MAIL_TYPE_LABELS,
-    }
-
-
 def cached_workspace_messages_response(workspace_id: str, payload: dict[str, Any], *, limit: int = 80, offset: int = 0) -> dict[str, Any]:
-    try:
-        limit = max(1, min(int(limit or 80), 500))
-    except (TypeError, ValueError):
-        limit = 80
-    try:
-        offset = max(0, int(offset or 0))
-    except (TypeError, ValueError):
-        offset = 0
-    messages = filter_messages(load_workspace_messages(workspace_id), payload)
+    return MESSAGE_QUERY_SERVICE.workspace_messages_response(
+        workspace_id,
+        payload,
+        limit=limit,
+        offset=offset,
+    )
+
+
+def parse_message_query_params(params: dict[str, list[str]]) -> tuple[dict[str, Any], str, str]:
+    return MESSAGE_QUERY_SERVICE.parse_query_params(params)
+
+
+def workspace_messages_response_from_params(workspace_id: str, params: dict[str, list[str]]) -> dict[str, Any]:
+    return MESSAGE_QUERY_SERVICE.workspace_messages_response_from_params(
+        workspace_id,
+        params,
+    )
+
+
+def workspace_messages_response_from_payload(
+    workspace_id: str,
+    payload: dict[str, Any],
+    *,
+    limit: Any = 80,
+    offset: Any = 0,
+) -> dict[str, Any]:
+    return cached_workspace_messages_response(
+        workspace_id,
+        payload,
+        limit=limit,
+        offset=offset,
+    )
+
+
+def workspace_messages_response_from_request_payload(
+    workspace_id: str,
+    payload: dict[str, Any],
+) -> dict[str, Any]:
+    return MESSAGE_QUERY_SERVICE.workspace_messages_response_from_request_payload(
+        workspace_id,
+        payload,
+    )
+
+
+def send_workspace_messages_json(
+    handler: Any,
+    workspace_id: str,
+    *,
+    params: dict[str, list[str]] | None = None,
+    payload: dict[str, Any] | None = None,
+) -> None:
+    if payload is not None:
+        handler.send_json(workspace_messages_response_from_request_payload(workspace_id, payload))
+        return
+    handler.send_json(workspace_messages_response_from_params(workspace_id, params or {}))
+
+
+def search_workspace_messages_response(
+    workspace_id: str,
+    payload: dict[str, Any],
+) -> dict[str, Any]:
+    preview_payload = dict(payload)
+    preview_payload.pop("offset", None)
+    response = workspace_messages_response_from_request_payload(workspace_id, preview_payload)
     return {
-        "success": True,
-        "messages": messages[offset:offset + limit],
-        "count": len(messages),
-        "offset": offset,
-        "limit": limit,
-        "types": MAIL_TYPE_LABELS,
+        "messages": response.get("messages", []),
+        "count": len(response.get("messages", [])),
+        "types": response.get("types", MAIL_TYPE_LABELS),
     }
+
+
+def fetch_saved_workspace_mail(payload: dict[str, Any], workspace_id: str) -> dict[str, Any]:
+    accounts = load_workspace_accounts(workspace_id)
+    temp_addresses = load_workspace_temp_addresses(workspace_id)
+    generic_accounts = load_workspace_generic_accounts(workspace_id)
+    fetched = MAIL_FETCH_SERVICE.fetch_saved_workspace(
+        payload,
+        accounts=accounts,
+        temp_addresses=temp_addresses,
+        generic_accounts=generic_accounts,
+    )
+    return persist_workspace_mail_fetch_result(
+        workspace_id,
+        fetched.result,
+        accounts=fetched.accounts,
+        temp_addresses=fetched.temp_addresses,
+        generic_accounts=fetched.generic_accounts,
+    )
 
 
 def lightweight_mail_fetch_result(result: dict[str, Any]) -> dict[str, Any]:
@@ -689,6 +741,25 @@ def lightweight_fetch_result(result: dict[str, Any], *, cached_count: int = 0) -
     clean["messages"] = []
     clean["cached_messages"] = cached_count
     return clean
+
+
+def persist_workspace_mail_fetch_result(
+    workspace_id: str,
+    result: dict[str, Any],
+    *,
+    accounts: dict[str, MailAccount] | None = None,
+    temp_addresses: dict[str, TempAddress] | None = None,
+    generic_accounts: dict[str, GenericMailAccount] | None = None,
+) -> dict[str, Any]:
+    messages = result.get("messages", []) if isinstance(result.get("messages"), list) else []
+    workspace_state().upsert_messages_state(workspace_id, messages)
+    if accounts is not None:
+        save_workspace_accounts_state(workspace_id, accounts)
+    if temp_addresses is not None:
+        save_workspace_temp_addresses_state(workspace_id, temp_addresses)
+    if generic_accounts is not None:
+        save_workspace_generic_accounts_state(workspace_id, generic_accounts)
+    return lightweight_fetch_result(result, cached_count=len(messages))
 
 
 def parse_message_datetime(value: Any) -> datetime | None:
@@ -3046,6 +3117,13 @@ MAIL_FETCH_SERVICE = MailFetchService(
     run_mail_fetch_jobs=run_mail_fetch_jobs,
     message_sort_value=message_sort_value,
     mail_type_labels=MAIL_TYPE_LABELS,
+)
+
+MESSAGE_QUERY_SERVICE = MessageQueryService(
+    load_workspace_messages=load_workspace_messages,
+    filter_messages=filter_messages,
+    mail_type_labels=MAIL_TYPE_LABELS,
+    load_messages_from_path=load_messages,
 )
 
 
@@ -8383,9 +8461,8 @@ def run_client_mail_fetch_job(job_id: str, payload: dict[str, Any], workspace_id
             result = MAIL_FETCH_SERVICE.fetch_prepared(prepared, progress_callback=lambda progress: set_mail_fetch_job(job_id, **progress))
         else:
             result = fetch_transient_client_mail(payload, progress_callback=lambda progress: set_mail_fetch_job(job_id, **progress))
-        messages = result.get("messages", []) if isinstance(result.get("messages"), list) else []
-        workspace_state().upsert_messages_state(workspace, messages)
-        set_mail_fetch_job(job_id, status="success", processed=int(result.get("summary", {}).get("total") or 0), current_email="", result=lightweight_fetch_result(result, cached_count=len(messages)))
+        lightweight = persist_workspace_mail_fetch_result(workspace, result)
+        set_mail_fetch_job(job_id, status="success", processed=int(result.get("summary", {}).get("total") or 0), current_email="", result=lightweight)
     except Exception as exc:
         set_mail_fetch_job(job_id, status="failed", error=str(exc)[:500])
 
@@ -8747,20 +8824,7 @@ class Handler(BaseHTTPRequestHandler):
         if parsed_client.path == "/client-api/messages":
             try:
                 params = urllib.parse.parse_qs(parsed_client.query)
-                payload = {
-                    "query": params.get("query", [""])[0],
-                    "sender": params.get("sender", [""])[0],
-                    "source": params.get("source", ["all"])[0],
-                    "mail_type": params.get("mail_type", ["all"])[0],
-                    "category": params.get("category", ["all"])[0],
-                    "account": params.get("account", [""])[0],
-                }
-                self.send_json(cached_workspace_messages_response(
-                    self.workspace_id(),
-                    payload,
-                    limit=params.get("limit", ["80"])[0],
-                    offset=params.get("offset", ["0"])[0],
-                ))
+                send_workspace_messages_json(self, self.workspace_id(), params=params)
             except Exception as exc:
                 self.send_json({"success": False, "error": str(exc)[:500]}, status=HTTPStatus.BAD_REQUEST)
             return
@@ -8830,20 +8894,7 @@ class Handler(BaseHTTPRequestHandler):
                 return
             if parsed.path == "/api/messages":
                 params = urllib.parse.parse_qs(parsed.query)
-                payload = {
-                    "query": params.get("query", [""])[0],
-                    "sender": params.get("sender", [""])[0],
-                    "source": params.get("source", ["all"])[0],
-                    "mail_type": params.get("mail_type", ["all"])[0],
-                    "category": params.get("category", ["all"])[0],
-                    "account": params.get("account", [""])[0],
-                }
-                self.send_json(cached_workspace_messages_response(
-                    workspace,
-                    payload,
-                    limit=params.get("limit", ["80"])[0],
-                    offset=params.get("offset", ["0"])[0],
-                ))
+                send_workspace_messages_json(self, workspace, params=params)
                 return
             self.send_error(HTTPStatus.NOT_FOUND)
             return
@@ -8891,9 +8942,7 @@ class Handler(BaseHTTPRequestHandler):
                 workspace = self.workspace_id()
                 hydrate_login_mail_credentials(payload, workspace)
                 result = fetch_transient_client_mail(payload)
-                messages = result.get("messages", []) if isinstance(result.get("messages"), list) else []
-                workspace_state().upsert_messages_state(workspace, messages)
-                self.send_json(lightweight_fetch_result(result, cached_count=len(messages)))
+                self.send_json(persist_workspace_mail_fetch_result(workspace, result))
             except Exception as exc:
                 self.send_json({"error": str(exc)[:500]}, status=HTTPStatus.BAD_REQUEST)
             return
@@ -9148,50 +9197,7 @@ class Handler(BaseHTTPRequestHandler):
             return
         if self.path == "/api/fetch":
             payload = self.read_json()
-            workspace = self.workspace_id()
-            accounts = load_workspace_accounts(workspace)
-            temp_addresses = load_workspace_temp_addresses(workspace)
-            generic_accounts = load_workspace_generic_accounts(workspace)
-            selected = [email.lower() for email in payload.get("emails", []) if isinstance(email, str)]
-            provider = str(payload.get("provider", "auto"))
-            sender_filter = str(payload.get("sender_filter", "")).strip()
-            limit = max(1, min(int(payload.get("limit", 8)), 30))
-            source = str(payload.get("source", "microsoft")).lower()
-            targets = [
-                account for key, account in accounts.items()
-                if not selected or key in selected
-            ]
-            temp_targets = [
-                address for key, address in temp_addresses.items()
-                if not selected or key in selected
-            ]
-            generic_targets = [
-                account for key, account in generic_accounts.items()
-                if not selected or key in selected
-            ]
-            jobs: list[tuple[str, MailAccount | TempAddress | GenericMailAccount, str, int, str]] = []
-            if source in {"microsoft", "all"}:
-                jobs.extend(("microsoft", account, provider, limit, sender_filter) for account in targets)
-            if source in {"temp", "all"}:
-                jobs.extend(("temp", address, provider, limit, sender_filter) for address in temp_targets)
-            if source in {"generic", "all"}:
-                jobs.extend(("generic", account, provider, limit, sender_filter) for account in generic_targets)
-            results = run_mail_fetch_jobs(jobs)
-            messages = [message for result in results for message in result.get("messages", [])]
-            failed_results = [result for result in results if not result.get("ok")]
-            workspace_state().upsert_messages_state(workspace, messages)
-            save_workspace_accounts_state(workspace, accounts)
-            save_workspace_temp_addresses_state(workspace, temp_addresses)
-            save_workspace_generic_accounts_state(workspace, generic_accounts)
-            self.send_json(lightweight_fetch_result({
-                "results": results,
-                "summary": {
-                    "total": len(results),
-                    "ok": len(results) - len(failed_results),
-                    "failed": len(failed_results),
-                    "messages": len(messages),
-                },
-            }, cached_count=len(messages)))
+            self.send_json(fetch_saved_workspace_mail(payload, self.workspace_id()))
             return
         if self.path == "/api/messages/delete":
             try:
@@ -9222,10 +9228,7 @@ class Handler(BaseHTTPRequestHandler):
             return
         if self.path == "/api/messages/search":
             payload = self.read_json()
-            limit = max(1, min(int(payload.get("limit", 80)), 500))
-            workspace = self.workspace_id()
-            messages = filter_messages(load_workspace_messages(workspace), payload)[:limit]
-            self.send_json({"messages": messages, "count": len(messages), "types": MAIL_TYPE_LABELS})
+            self.send_json(search_workspace_messages_response(self.workspace_id(), payload))
             return
         self.send_error(HTTPStatus.NOT_FOUND)
 
