@@ -1,5 +1,11 @@
 # 更新记录
 
+## 1.0.3
+
+- 继续推进 `server.py` 分层，这一轮先把 CPA 远端交互和仓管操作独立成新的 `cpa_client.py`，把 OAuth 授权入口、auth file 上传/下载、401 巡检、批量修复、删除和生命周期刷新从主文件里抽出来。
+- `server.py` 里的 CPA 路由现在只保留薄入口，旧的 CPA helper 已清理掉，后面继续拆 `refresh_state_machine`、`http_handlers` 和更多 provider 时，边界会更清楚。
+- 新增 `tests/test_cpa_client.py`，直接覆盖 CPA OAuth 启动、auth 替换探测和 401 生命周期筛选，保证这次分层不是只挪代码、没有回归保护。
+
 ## 1.0.2
 
 - 继续收紧工作区级数据隔离：工作区邮件查询、已保存邮箱收信和收信结果落盘统一走新的消息查询服务与收信服务封装，减少 `server.py` 里的重复筛选和状态写回逻辑。
