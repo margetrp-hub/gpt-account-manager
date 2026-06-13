@@ -87,6 +87,7 @@ from dashboard_stats import (
     dashboard_stats_response as build_dashboard_stats_response,
 )
 from cpa_http_handlers import CpaHttpHandlers
+from http_handlers import HttpHandlers
 from cpa_client import CpaClient
 from refresh_lifecycle_service import RefreshLifecycleService
 from message_query_service import MessageQueryService
@@ -5367,6 +5368,7 @@ def cpa_direct_oauth_callback(payload: dict[str, Any]) -> dict[str, Any]:
 CPA_CLIENT: CpaClient | None = None
 REFRESH_LIFECYCLE_SERVICE: RefreshLifecycleService | None = None
 CPA_HTTP_HANDLERS: CpaHttpHandlers | None = None
+HTTP_HANDLERS: HttpHandlers | None = None
 
 
 def refresh_lifecycle_service() -> RefreshLifecycleService:
@@ -5408,6 +5410,57 @@ def cpa_http_handlers() -> CpaHttpHandlers:
             cpa_direct_oauth_callback=cpa_direct_oauth_callback,
         )
         CPA_HTTP_HANDLERS = handlers
+    return handlers
+
+
+def http_handlers() -> HttpHandlers:
+    global HTTP_HANDLERS
+    handlers = HTTP_HANDLERS
+    if handlers is None:
+        handlers = HttpHandlers(
+            app_version=APP_VERSION,
+            public_app_title=PUBLIC_APP_TITLE,
+            public_store_url=PUBLIC_STORE_URL,
+            public_relay_url=PUBLIC_RELAY_URL,
+            public_pool_url=PUBLIC_POOL_URL,
+            public_pool_api_url=PUBLIC_POOL_API_URL,
+            public_top_links=public_top_links,
+            static_dir=STATIC_DIR,
+            login_debug_dir=LOGIN_DEBUG_DIR,
+            admin_token=ADMIN_TOKEN,
+            cpa_http_handlers=cpa_http_handlers(),
+            health_payload=health_payload,
+            network_health_payload=network_health_payload,
+            upgrade_status_payload=upgrade_status_payload,
+            get_client_mail_fetch_job=get_client_mail_fetch_job,
+            send_workspace_messages_json=send_workspace_messages_json,
+            dashboard_stats_response=dashboard_stats_response,
+            load_workspace_accounts=load_workspace_accounts,
+            load_workspace_temp_addresses=load_workspace_temp_addresses,
+            load_workspace_generic_accounts=load_workspace_generic_accounts,
+            load_refresh_results_for_workspace=load_refresh_results_for_workspace,
+            load_login_history_for_workspace=load_login_history_for_workspace,
+            hydrate_login_mail_credentials=hydrate_login_mail_credentials,
+            fetch_transient_client_mail=fetch_transient_client_mail,
+            persist_workspace_mail_fetch_result=persist_workspace_mail_fetch_result,
+            start_client_mail_fetch_job=start_client_mail_fetch_job,
+            delete_workspace_mail_messages=delete_workspace_mail_messages,
+            check_proxy_egress=check_proxy_egress,
+            classify_login_exception=classify_login_exception,
+            sync_temp_jwts_from_worker=sync_temp_jwts_from_worker,
+            import_pickup_accounts=import_pickup_accounts,
+            import_temp_addresses=import_temp_addresses,
+            import_generic_accounts=import_generic_accounts,
+            delete_workspace_mail_credentials=delete_workspace_mail_credentials,
+            poll_phone_code=poll_phone_code,
+            extract_admin_jwts=extract_admin_jwts,
+            push_public_pool=push_public_pool,
+            create_upgrade_request=create_upgrade_request,
+            mailbox_workspace_service=MAILBOX_WORKSPACE_SERVICE,
+            fetch_saved_workspace_mail=fetch_saved_workspace_mail,
+            search_workspace_messages_response=search_workspace_messages_response,
+        )
+        HTTP_HANDLERS = handlers
     return handlers
 
 
@@ -7824,170 +7877,7 @@ class Handler(BaseHTTPRequestHandler):
             return
 
     def _do_GET_impl(self) -> None:
-        parsed_request = urllib.parse.urlparse(self.path)
-        request_path = parsed_request.path
-        if request_path == "/public-config":
-            self.send_json({
-                "title": PUBLIC_APP_TITLE,
-                "version": APP_VERSION,
-                "store_url": PUBLIC_STORE_URL,
-                "relay_url": PUBLIC_RELAY_URL,
-                "public_pool_url": PUBLIC_POOL_URL,
-                "top_links": public_top_links(),
-                "public_pool_api_configured": bool(PUBLIC_POOL_API_URL),
-            })
-            return
-        if request_path.lower() in {"/login", "/login.html"}:
-            self.serve_static_file(STATIC_DIR / "login.html")
-            return
-        if request_path == "/health":
-            try:
-                self.require_admin_page_auth()
-            except ConnectionAbortedError:
-                return
-            self.send_json(health_payload())
-            return
-        if request_path == "/network-health":
-            try:
-                self.require_admin_page_auth()
-            except ConnectionAbortedError:
-                return
-            self.send_json(network_health_payload())
-            return
-        if request_path == "/admin-api/upgrade/status":
-            try:
-                self.require_auth()
-            except ConnectionAbortedError:
-                return
-            self.send_json(upgrade_status_payload())
-            return
-        if request_path.lower() == "/health.html":
-            try:
-                self.require_admin_page_auth()
-            except ConnectionAbortedError:
-                return
-            self.serve_static_file(STATIC_DIR / "health.html")
-            return
-        if request_path.lower().startswith("/login-debug/"):
-            try:
-                self.require_admin_page_auth()
-            except ConnectionAbortedError:
-                return
-            rel = urllib.parse.unquote(request_path[len("/login-debug/"):])
-            target = (LOGIN_DEBUG_DIR / rel).resolve()
-            if LOGIN_DEBUG_DIR.resolve() not in target.parents and target != LOGIN_DEBUG_DIR.resolve():
-                self.send_error(HTTPStatus.FORBIDDEN)
-                return
-            self.serve_static_file(target)
-            return
-        if request_path.lower().startswith("/public-pool"):
-            self.send_response(HTTPStatus.FOUND)
-            self.send_header("Location", PUBLIC_POOL_URL or PUBLIC_RELAY_URL or "/")
-            self.end_headers()
-            return
-        if request_path.lower() in {"/converter", "/converter/"}:
-            self.serve_static_file(STATIC_DIR / "converter.html")
-            return
-        if request_path.lower() in {"/dashboard", "/dashboard/"}:
-            self.serve_static_file(STATIC_DIR / "dashboard.html")
-            return
-        if request_path.lower() in {"/refresh", "/refresh/"}:
-            self.serve_static_file(STATIC_DIR / "refresh.html")
-            return
-        if request_path.lower() in {"/mailboxes", "/mailboxes/"}:
-            self.serve_static_file(STATIC_DIR / "mailboxes.html")
-            return
-        if request_path.lower() in {"/warehouse", "/warehouse/"}:
-            self.serve_static_file(STATIC_DIR / "warehouse.html")
-            return
-        parsed_client = parsed_request
-        if cpa_http_handlers().handle_client_get(self, parsed_client):
-            return
-        if parsed_client.path == "/client-api/fetch-status":
-            try:
-                params = urllib.parse.parse_qs(parsed_client.query)
-                self.send_json(get_client_mail_fetch_job(params.get("job_id", [""])[0], self.workspace_id()))
-            except Exception as exc:
-                self.send_json({"success": False, "error": str(exc)[:500]}, status=HTTPStatus.BAD_REQUEST)
-            return
-        if parsed_client.path == "/client-api/messages":
-            try:
-                params = urllib.parse.parse_qs(parsed_client.query)
-                send_workspace_messages_json(self, self.workspace_id(), params=params)
-            except Exception as exc:
-                self.send_json({"success": False, "error": str(exc)[:500]}, status=HTTPStatus.BAD_REQUEST)
-            return
-        if parsed_client.path == "/client-api/dashboard-stats":
-            try:
-                params = urllib.parse.parse_qs(parsed_client.query)
-                self.send_json(dashboard_stats_response(
-                    self.workspace_id(),
-                    days=params.get("days", ["30"])[0],
-                    limit=params.get("limit", ["300"])[0],
-                    tz_offset_minutes=params.get("tz_offset", ["480"])[0],
-                ))
-            except Exception as exc:
-                self.send_json({"success": False, "error": str(exc)[:500]}, status=HTTPStatus.BAD_REQUEST)
-            return
-        if parsed_client.path == "/client-api/accounts":
-            try:
-                accounts = load_workspace_accounts(self.workspace_id())
-                self.send_json({"accounts": [acc.public() for acc in accounts.values()]})
-            except Exception as exc:
-                self.send_json({"success": False, "error": str(exc)[:500]}, status=HTTPStatus.BAD_REQUEST)
-            return
-        if parsed_client.path == "/client-api/temp-addresses":
-            try:
-                addresses = load_workspace_temp_addresses(self.workspace_id())
-                self.send_json({"addresses": [addr.public() for addr in addresses.values()]})
-            except Exception as exc:
-                self.send_json({"success": False, "error": str(exc)[:500]}, status=HTTPStatus.BAD_REQUEST)
-            return
-        if parsed_client.path == "/client-api/generic-accounts":
-            try:
-                accounts = load_workspace_generic_accounts(self.workspace_id())
-                self.send_json({"accounts": [acc.public() for acc in accounts.values()]})
-            except Exception as exc:
-                self.send_json({"success": False, "error": str(exc)[:500]}, status=HTTPStatus.BAD_REQUEST)
-            return
-        if parsed_client.path == "/client-api/refresh-results":
-            try:
-                results = load_refresh_results_for_workspace(self.workspace_id())
-                self.send_json({"results": results})
-            except Exception as exc:
-                self.send_json({"success": False, "error": str(exc)[:500]}, status=HTTPStatus.BAD_REQUEST)
-            return
-        if self.path.startswith("/api/"):
-            self.require_auth()
-            parsed = urllib.parse.urlparse(self.path)
-            workspace = self.workspace_id()
-            if parsed.path == "/api/accounts":
-                accounts = load_workspace_accounts(workspace)
-                self.send_json({"accounts": [acc.public() for acc in accounts.values()]})
-                return
-            if parsed.path == "/api/temp-addresses":
-                addresses = load_workspace_temp_addresses(workspace)
-                self.send_json({"addresses": [addr.public() for addr in addresses.values()]})
-                return
-            if parsed.path == "/api/generic-accounts":
-                accounts = load_workspace_generic_accounts(workspace)
-                self.send_json({"accounts": [acc.public() for acc in accounts.values()]})
-                return
-            if parsed.path == "/api/refresh-results":
-                results = load_refresh_results_for_workspace(workspace)
-                self.send_json({"results": results})
-                return
-            if parsed.path == "/api/login-history":
-                history = load_login_history_for_workspace(workspace)
-                self.send_json({"history": history})
-                return
-            if parsed.path == "/api/messages":
-                params = urllib.parse.parse_qs(parsed.query)
-                send_workspace_messages_json(self, workspace, params=params)
-                return
-            self.send_error(HTTPStatus.NOT_FOUND)
-            return
-        self.serve_static()
+        http_handlers().handle_get(self)
 
     def do_POST(self) -> None:
         try:
@@ -7998,224 +7888,7 @@ class Handler(BaseHTTPRequestHandler):
             return
 
     def _do_POST_impl(self) -> None:
-        if self.path == "/auth/login":
-            try:
-                payload = self.read_json()
-                token = str(payload.get("token", "")).strip()
-                if not ADMIN_TOKEN:
-                    self.send_json({"success": False, "error": "MAIL_PICKUP_ADMIN_TOKEN is not set."}, status=HTTPStatus.SERVICE_UNAVAILABLE)
-                    return
-                if not hmac.compare_digest(token, ADMIN_TOKEN):
-                    self.send_json({"success": False, "error": "Unauthorized"}, status=HTTPStatus.UNAUTHORIZED)
-                    return
-                self.send_json_with_headers(
-                    {"success": True},
-                    {
-                        "Set-Cookie": self.admin_cookie_header(token),
-                    },
-                )
-            except Exception as exc:
-                self.send_json({"success": False, "error": str(exc)[:500]}, status=HTTPStatus.BAD_REQUEST)
-            return
-        if self.path == "/auth/logout":
-            self.send_json_with_headers(
-                {"success": True},
-                {
-                    "Set-Cookie": self.clear_admin_cookie_header(),
-                },
-            )
-            return
-        if self.path == "/client-api/fetch":
-            try:
-                payload = self.read_json()
-                workspace = self.workspace_id()
-                hydrate_login_mail_credentials(payload, workspace)
-                result = fetch_transient_client_mail(payload)
-                self.send_json(persist_workspace_mail_fetch_result(workspace, result))
-            except Exception as exc:
-                self.send_json({"error": str(exc)[:500]}, status=HTTPStatus.BAD_REQUEST)
-            return
-        if self.path == "/client-api/fetch-start":
-            try:
-                self.send_json(start_client_mail_fetch_job(self.read_json(), self.workspace_id()))
-            except Exception as exc:
-                self.send_json({"success": False, "error": str(exc)[:500]}, status=HTTPStatus.BAD_REQUEST)
-            return
-        if self.path == "/client-api/messages/delete":
-            try:
-                self.send_json(delete_workspace_mail_messages(self.read_json(), self.workspace_id()))
-            except Exception as exc:
-                self.send_json({"success": False, "error": str(exc)[:500]}, status=HTTPStatus.BAD_REQUEST)
-            return
-        if cpa_http_handlers().handle_client_post(self):
-            return
-        if self.path == "/client-api/proxy/check":
-            try:
-                self.send_json(check_proxy_egress(self.read_json()))
-            except Exception as exc:
-                details = classify_login_exception(exc)
-                self.send_json({
-                    "success": False,
-                    "error": details.get("message", str(exc))[:500],
-                    "error_code": details.get("code", "proxy_check_failed"),
-                    "error_hint": details.get("hint", ""),
-                }, status=HTTPStatus.BAD_REQUEST)
-            return
-        if self.path == "/client-api/temp-addresses/sync-jwts":
-            try:
-                self.send_json(sync_temp_jwts_from_worker(self.read_json(), self.workspace_id()))
-            except Exception as exc:
-                self.send_json({
-                    "success": False,
-                    "error": str(exc)[:500],
-                    "error_code": "temp_sync_failed",
-                }, status=HTTPStatus.BAD_REQUEST)
-            return
-        if self.path == "/client-api/accounts/import-pickup":
-            try:
-                self.send_json(import_pickup_accounts(self.read_json(), self.workspace_id()))
-            except Exception as exc:
-                self.send_json({
-                    "success": False,
-                    "error": str(exc)[:500],
-                    "error_code": "pickup_import_failed",
-                }, status=HTTPStatus.BAD_REQUEST)
-            return
-        if self.path == "/client-api/temp-addresses/import":
-            try:
-                self.send_json(import_temp_addresses(self.read_json(), self.workspace_id()))
-            except Exception as exc:
-                self.send_json({
-                    "success": False,
-                    "error": str(exc)[:500],
-                    "error_code": "temp_import_failed",
-                }, status=HTTPStatus.BAD_REQUEST)
-            return
-        if self.path == "/client-api/generic-accounts/import":
-            try:
-                self.send_json(import_generic_accounts(self.read_json(), self.workspace_id()))
-            except Exception as exc:
-                self.send_json({
-                    "success": False,
-                    "error": str(exc)[:500],
-                    "error_code": "generic_import_failed",
-                }, status=HTTPStatus.BAD_REQUEST)
-            return
-        if self.path == "/client-api/accounts/delete":
-            try:
-                self.send_json(delete_workspace_mail_credentials(self.read_json(), self.workspace_id()))
-            except Exception as exc:
-                self.send_json({
-                    "success": False,
-                    "error": str(exc)[:500],
-                    "error_code": "delete_failed",
-                }, status=HTTPStatus.BAD_REQUEST)
-            return
-        if self.path == "/client-api/phone-code/poll":
-            try:
-                self.send_json(poll_phone_code(self.read_json()))
-            except Exception as exc:
-                self.send_json({
-                    "success": False,
-                    "error": str(exc)[:500],
-                    "error_code": "phone_code_fetch_failed",
-                }, status=HTTPStatus.BAD_REQUEST)
-            return
-        if self.path.startswith("/admin-api/"):
-            try:
-                self.require_auth()
-            except ConnectionAbortedError:
-                return
-            if self.path == "/admin-api/extract-jwts":
-                try:
-                    self.send_json(extract_admin_jwts(self.read_json()))
-                except Exception as exc:
-                    self.send_json({"error": str(exc)[:500]}, status=HTTPStatus.BAD_REQUEST)
-                return
-            if self.path == "/admin-api/public-pool/push":
-                try:
-                    self.send_json(push_public_pool(self.read_json()))
-                except Exception as exc:
-                    self.send_json({"error": str(exc)[:500]}, status=HTTPStatus.BAD_REQUEST)
-                return
-            if self.path == "/admin-api/upgrade/request":
-                try:
-                    self.send_json(create_upgrade_request(self.read_json()))
-                except Exception as exc:
-                    self.send_json({"success": False, "error": str(exc)[:500]}, status=HTTPStatus.BAD_REQUEST)
-                return
-            self.send_error(HTTPStatus.NOT_FOUND)
-            return
-        self.require_auth()
-        if self.path == "/api/import":
-            payload = self.read_json()
-            replace_existing = bool(payload.get("replace_existing") or payload.get("replaceExisting"))
-            self.send_json(
-                MAILBOX_WORKSPACE_SERVICE.import_pickup_accounts_for_workspace(
-                    payload,
-                    self.workspace_id(),
-                    replace_existing=replace_existing,
-                )
-            )
-            return
-        if self.path == "/api/temp-addresses/import":
-            payload = self.read_json()
-            replace_existing = bool(payload.get("replace_existing") or payload.get("replaceExisting"))
-            self.send_json(
-                MAILBOX_WORKSPACE_SERVICE.import_temp_addresses_for_workspace(
-                    payload,
-                    self.workspace_id(),
-                    replace_existing=replace_existing,
-                )
-            )
-            return
-        if self.path == "/api/generic-accounts/import":
-            payload = self.read_json()
-            replace_existing = bool(payload.get("replace_existing") or payload.get("replaceExisting"))
-            self.send_json(
-                MAILBOX_WORKSPACE_SERVICE.import_generic_accounts_for_workspace(
-                    payload,
-                    self.workspace_id(),
-                    replace_existing=replace_existing,
-                )
-            )
-            return
-        if self.path == "/api/fetch":
-            payload = self.read_json()
-            self.send_json(fetch_saved_workspace_mail(payload, self.workspace_id()))
-            return
-        if self.path == "/api/messages/delete":
-            try:
-                self.send_json(delete_workspace_mail_messages(self.read_json(), self.workspace_id()))
-            except Exception as exc:
-                self.send_json({"success": False, "error": str(exc)[:500]}, status=HTTPStatus.BAD_REQUEST)
-            return
-        if self.path == "/api/delete":
-            result = MAILBOX_WORKSPACE_SERVICE.delete_pickup_accounts_for_workspace(
-                self.read_json(),
-                self.workspace_id(),
-            )
-            self.send_json(result)
-            return
-        if self.path == "/api/temp-addresses/delete":
-            result = MAILBOX_WORKSPACE_SERVICE.delete_temp_addresses_for_workspace(
-                self.read_json(),
-                self.workspace_id(),
-            )
-            self.send_json(result)
-            return
-        if self.path == "/api/generic-accounts/delete":
-            result = MAILBOX_WORKSPACE_SERVICE.delete_generic_accounts_for_workspace(
-                self.read_json(),
-                self.workspace_id(),
-            )
-            self.send_json(result)
-            return
-        if self.path == "/api/messages/search":
-            payload = self.read_json()
-            self.send_json(search_workspace_messages_response(self.workspace_id(), payload))
-            return
-        self.send_error(HTTPStatus.NOT_FOUND)
+        http_handlers().handle_post(self)
 
     def is_local_request(self) -> bool:
         host = self.headers.get("Host", "").split(":", 1)[0].lower()

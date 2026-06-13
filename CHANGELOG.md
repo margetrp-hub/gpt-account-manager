@@ -1,5 +1,11 @@
 # 更新记录
 
+## 1.0.6
+
+- 继续完成 `server.py` 的 HTTP 分发拆层，新增总的 `http_handlers.py`，把公共 GET、管理员 GET、client API、workspace API、认证 POST 和管理员 POST 统一移入独立分发模块。
+- `server.py` 里的 `Handler` 现在主要保留 `BaseHTTPRequestHandler` 外壳、鉴权辅助、工作区解析、静态文件服务和 JSON 输出底层方法，通用路由不再继续堆在一个巨型 `if/elif` 里。
+- 新增 `tests/test_http_handlers.py`，覆盖 public-config、client accounts、workspace messages、auth login、client fetch、workspace import 和静态页兜底，保证完整分发层拆完后主路径仍然稳定。
+
 ## 1.0.5
 
 - 继续拆分 `server.py`，把 CPA 仓管和凭证刷新相关的客户端 HTTP 路由独立到新的 `cpa_http_handlers.py`，包括登录状态查询、生命周期刷新、401 扫描/修复、auth 替换、手动填码、任务终止和已停用 OAuth 路径提示。
