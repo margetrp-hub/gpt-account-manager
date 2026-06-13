@@ -1,5 +1,11 @@
 # 更新记录
 
+## 1.0.4
+
+- 继续拆分 `server.py`，把凭证生命周期刷新逻辑独立到新的 `refresh_lifecycle_service.py`：统一接管 RT / session_token / access_token 三条刷新与探测路径，减少 `server.py` 和 `cpa_client.py` 之间的隐式耦合。
+- `server.py` 保留兼容旧调用的薄包装入口，`cpa_client.py` 改为直接依赖新的生命周期 service 方法，后面继续拆 `http_handlers`、刷新预算和错误聚合时，不需要再穿回主文件里找一堆 helper。
+- 新增 `tests/test_refresh_lifecycle_service.py`，覆盖空请求、RT 成功刷新、封禁 RT 分类、access_token 探测和汇总计数，保证这次抽离有回归保护。
+
 ## 1.0.3
 
 - 继续推进 `server.py` 分层，这一轮先把 CPA 远端交互和仓管操作独立成新的 `cpa_client.py`，把 OAuth 授权入口、auth file 上传/下载、401 巡检、批量修复、删除和生命周期刷新从主文件里抽出来。

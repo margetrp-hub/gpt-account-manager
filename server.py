@@ -87,6 +87,7 @@ from dashboard_stats import (
     dashboard_stats_response as build_dashboard_stats_response,
 )
 from cpa_client import CpaClient
+from refresh_lifecycle_service import RefreshLifecycleService
 from message_query_service import MessageQueryService
 from mail_fetch_service import MailFetchService
 from mailbox_workspace_service import MailboxWorkspaceService
@@ -5363,12 +5364,31 @@ def cpa_direct_oauth_callback(payload: dict[str, Any]) -> dict[str, Any]:
 
 
 CPA_CLIENT: CpaClient | None = None
+REFRESH_LIFECYCLE_SERVICE: RefreshLifecycleService | None = None
+
+
+def refresh_lifecycle_service() -> RefreshLifecycleService:
+    global REFRESH_LIFECYCLE_SERVICE
+    service = REFRESH_LIFECYCLE_SERVICE
+    if service is None:
+        service = RefreshLifecycleService(
+            coerce_text=coerce_text,
+            first_text=first_text,
+            refresh_openai_with_rt=refresh_openai_with_rt,
+            refresh_openai_with_session_token=refresh_openai_with_session_token,
+            probe_openai_access_token=probe_openai_access_token,
+            access_token_expires_at=access_token_expires_at,
+            session_to_cpa_auth=session_to_cpa_auth,
+        )
+        REFRESH_LIFECYCLE_SERVICE = service
+    return service
 
 
 def cpa_client() -> CpaClient:
     global CPA_CLIENT
     client = CPA_CLIENT
     if client is None:
+        lifecycle_service = refresh_lifecycle_service()
         client = CpaClient(
             coerce_text=coerce_text,
             first_text=first_text,
@@ -5376,9 +5396,9 @@ def cpa_client() -> CpaClient:
             normalize_cpa_base_url=normalize_cpa_base_url,
             validate_cpa_base_url=validate_cpa_base_url,
             cpa_status_message=cpa_status_message,
-            lifecycle_status_label=lifecycle_status_label,
-            refresh_lifecycle_item=refresh_lifecycle_item,
-            lifecycle_summary=lifecycle_summary,
+            lifecycle_status_label=lifecycle_service.status_label,
+            refresh_lifecycle_item=lifecycle_service.refresh_item,
+            lifecycle_summary=lifecycle_service.summary,
             run_chatgpt_login_with_protocol=run_chatgpt_login_with_protocol,
             session_to_cpa_auth=session_to_cpa_auth,
             probe_user_agent=CPA_PROBE_USER_AGENT,
@@ -5817,266 +5837,31 @@ def probe_openai_access_token(access_token: str) -> dict[str, Any]:
 
 
 def lifecycle_status_label(status: str) -> str:
-    return {
-        "active": "可用",
-        "refreshed": "已刷新",
-        "rt_rotated": "已刷新并轮换 RT",
-        "rt_invalid": "RT 失效",
-        "session_expired": "会话失效",
-        "banned": "封禁/停用",
-        "risk_blocked": "风控/受限",
-        "usage_limit_reached": "额度耗尽",
-        "needs_login": "需要重新授权",
-        "probe_failed": "探测失败",
-        "not_openai_auth": "非 OpenAI 凭证",
-        "mail_ok": "邮箱可用",
-        "mail_dead": "邮箱不可用",
-    }.get(status, status or "未知")
+    return refresh_lifecycle_service().status_label(status)
 
 
 def classify_oauth_error(status: int, data: dict[str, Any], raw: str) -> tuple[str, str]:
-    err_obj = data.get("error")
-    if isinstance(err_obj, dict):
-        err = first_text(err_obj.get("code"), err_obj.get("type"), err_obj.get("error"))
-        desc = first_text(err_obj.get("message"), data.get("error_description"), data.get("message"), data.get("detail"), raw)
-    else:
-        err = coerce_text(err_obj)
-        desc = first_text(data.get("error_description"), data.get("message"), data.get("detail"), raw)
-    lowered = f"{err} {desc}".lower()
-    if err in {"invalid_grant", "invalid_client", "unauthorized_client", "invalid_request", "token_expired"} or status in {400, 401}:
-        if any(word in lowered for word in ["deactivated", "disabled", "banned", "suspended", "封禁", "停用"]):
-            return "banned", desc or err or f"HTTP {status}"
-        return "rt_invalid", desc or err or f"HTTP {status}"
-    if status == 403:
-        return "risk_blocked", desc or "OpenAI 拒绝刷新请求"
-    return "probe_failed", desc or f"HTTP {status}"
+    return refresh_lifecycle_service().classify_oauth_error(status, data, raw)
 
 
 def lifecycle_source_auth(source: dict[str, Any]) -> dict[str, Any]:
-    auth = source.get("auth_file") if isinstance(source.get("auth_file"), dict) else {}
-    if not auth and isinstance(source.get("authFile"), dict):
-        auth = source["authFile"]
-    if not auth and isinstance(source.get("session_json"), dict):
-        auth = source["session_json"]
-    if not auth:
-        auth = source
-    return auth if isinstance(auth, dict) else {}
+    return refresh_lifecycle_service().source_auth(source)
 
 
 def normalize_lifecycle_item(item: dict[str, Any]) -> dict[str, Any]:
-    auth = lifecycle_source_auth(item)
-    tokens = auth.get("tokens") if isinstance(auth.get("tokens"), dict) else {}
-    credentials = auth.get("credentials") if isinstance(auth.get("credentials"), dict) else {}
-    token = auth.get("token") if isinstance(auth.get("token"), dict) else {}
-    row = item.get("row") if isinstance(item.get("row"), dict) else {}
-    email_addr = first_text(
-        item.get("email"),
-        auth.get("email"),
-        auth.get("account"),
-        auth.get("name"),
-        credentials.get("email"),
-        row.get("email"),
-        row.get("account"),
-    )
-    name = first_text(item.get("name"), row.get("name"), auth.get("name"), email_addr)
-    return {
-        "email": email_addr,
-        "name": name,
-        "source": coerce_text(item.get("source") or auth.get("source") or "manual"),
-        "row": row,
-        "auth_index": first_text(item.get("auth_index"), row.get("auth_index"), auth.get("auth_index")),
-        "access_token": first_text(
-            item.get("access_token"),
-            item.get("accessToken"),
-            auth.get("access_token"),
-            auth.get("accessToken"),
-            tokens.get("access_token"),
-            tokens.get("accessToken"),
-            token.get("access_token"),
-            credentials.get("access_token"),
-        ),
-        "refresh_token": first_text(
-            item.get("chatgpt_refresh_token"),
-            item.get("openai_refresh_token"),
-            item.get("codex_refresh_token"),
-            item.get("refresh_token"),
-            item.get("refreshToken"),
-            auth.get("chatgpt_refresh_token"),
-            auth.get("openai_refresh_token"),
-            auth.get("codex_refresh_token"),
-            auth.get("refresh_token"),
-            auth.get("refreshToken"),
-            tokens.get("refresh_token"),
-            tokens.get("refreshToken"),
-            token.get("refresh_token"),
-            credentials.get("refresh_token"),
-        ),
-        "session_token": first_text(
-            item.get("session_token"),
-            item.get("sessionToken"),
-            auth.get("session_token"),
-            auth.get("sessionToken"),
-            tokens.get("session_token"),
-            tokens.get("sessionToken"),
-            token.get("session_token"),
-            credentials.get("session_token"),
-        ),
-        "id_token": first_text(
-            item.get("id_token"),
-            item.get("idToken"),
-            auth.get("id_token"),
-            auth.get("idToken"),
-            tokens.get("id_token"),
-            tokens.get("idToken"),
-            token.get("id_token"),
-            credentials.get("id_token"),
-        ),
-        "original_auth": auth,
-    }
+    return refresh_lifecycle_service().normalize_item(item)
 
 
 def refresh_lifecycle_item(item: dict[str, Any]) -> dict[str, Any]:
-    normalized = normalize_lifecycle_item(item)
-    email_addr = normalized["email"]
-    result: dict[str, Any] = {
-        "email": email_addr,
-        "name": normalized["name"],
-        "source": normalized["source"],
-        "auth_index": normalized["auth_index"],
-        "status": "needs_login",
-        "status_label": lifecycle_status_label("needs_login"),
-        "message": "缺少 ChatGPT/Codex refresh_token、session_token 或 access_token",
-        "ok": False,
-        "plan_type": "",
-        "access_token_updated": False,
-        "refresh_token_rotated": False,
-        "auth_file": None,
-    }
-
-    session_payload: dict[str, Any] | None = None
-    if normalized["refresh_token"]:
-        status, data, raw = refresh_openai_with_rt(normalized["refresh_token"])
-        if status == 200 and data.get("access_token"):
-            new_rt = coerce_text(data.get("refresh_token")) or normalized["refresh_token"]
-            session_payload = {
-                "email": email_addr,
-                "access_token": coerce_text(data.get("access_token")),
-                "refresh_token": new_rt,
-                "id_token": first_text(data.get("id_token"), normalized["id_token"]),
-                "session_token": normalized["session_token"],
-                "expires_at": access_token_expires_at(coerce_text(data.get("access_token"))),
-            }
-            result.update({
-                "status": "rt_rotated" if new_rt != normalized["refresh_token"] else "refreshed",
-                "message": "refresh_token 已刷新出新的 access_token",
-                "ok": True,
-                "access_token_updated": True,
-                "refresh_token_rotated": new_rt != normalized["refresh_token"],
-            })
-        else:
-            status_name, message = classify_oauth_error(status, data, raw)
-            result.update({
-                "status": status_name,
-                "message": message,
-                "ok": False,
-            })
-    elif normalized["session_token"]:
-        status, data, raw = refresh_openai_with_session_token(normalized["session_token"])
-        if status == 200 and first_text(data.get("accessToken"), data.get("access_token")):
-            session_payload = dict(data)
-            session_payload.setdefault("session_token", normalized["session_token"])
-            session_payload.setdefault("refresh_token", normalized["refresh_token"])
-            session_payload.setdefault("id_token", normalized["id_token"])
-            session_payload.setdefault("email", email_addr)
-            result.update({
-                "status": "refreshed",
-                "message": "session_token 已刷新出新的 access_token",
-                "ok": True,
-                "access_token_updated": True,
-            })
-        elif status == 401:
-            result.update({"status": "session_expired", "message": "session_token 已失效", "ok": False})
-        elif status == 403:
-            result.update({"status": "risk_blocked", "message": "session_token 探测触发风控或被拒绝", "ok": False})
-        else:
-            result.update({"status": "probe_failed", "message": first_text(data.get("error"), data.get("message"), raw, f"HTTP {status}"), "ok": False})
-    elif normalized["access_token"]:
-        probe = probe_openai_access_token(normalized["access_token"])
-        result.update({
-            "status": probe["status"],
-            "message": probe["message"],
-            "ok": bool(probe.get("credential_ok")) or probe["status"] == "active",
-            "plan_type": probe.get("plan_type") or "",
-        })
-        if result["ok"]:
-            session_payload = {
-                "email": email_addr,
-                "access_token": normalized["access_token"],
-                "refresh_token": normalized["refresh_token"],
-                "id_token": normalized["id_token"],
-                "session_token": normalized["session_token"],
-                "expires_at": access_token_expires_at(normalized["access_token"]),
-            }
-
-    if session_payload:
-        try:
-            fallback = dict(normalized["row"] or {})
-            fallback.setdefault("email", email_addr)
-            fallback.setdefault("name", normalized["name"])
-            auth_file = session_to_cpa_auth(session_payload, fallback)
-            if normalized["original_auth"]:
-                auth_file = {**normalized["original_auth"], **auth_file}
-            probe = probe_openai_access_token(coerce_text(auth_file.get("access_token")))
-            result["probe"] = probe
-            if probe.get("status") in {"active", "risk_blocked", "banned", "session_expired", "usage_limit_reached"}:
-                result["plan_type"] = probe.get("plan_type") or auth_file.get("plan_type") or result.get("plan_type") or ""
-                if probe["status"] == "banned":
-                    result.update({"status": probe["status"], "message": probe["message"], "ok": False})
-                elif probe["status"] == "usage_limit_reached":
-                    result.update({"status": probe["status"], "message": probe["message"], "ok": True})
-            result["auth_file"] = auth_file
-            result["email"] = auth_file.get("email") or result["email"]
-            result["name"] = auth_file.get("name") or result["name"]
-            result["expires_at"] = auth_file.get("expired", "")
-        except Exception as exc:
-            result.update({
-                "status": "probe_failed",
-                "message": f"刷新成功但转换 CPA auth 失败：{str(exc)[:220]}",
-                "ok": False,
-            })
-
-    result["status_label"] = lifecycle_status_label(result["status"])
-    return result
+    return refresh_lifecycle_service().refresh_item(item)
 
 
 def lifecycle_summary(results: list[dict[str, Any]], uploaded: int = 0) -> dict[str, Any]:
-    return {
-        "total": len(results),
-        "active": sum(1 for item in results if item.get("ok")),
-        "refreshed": sum(1 for item in results if item.get("status") in {"refreshed", "rt_rotated", "active"}),
-        "invalid": sum(1 for item in results if item.get("status") in {"rt_invalid", "session_expired"}),
-        "banned": sum(1 for item in results if item.get("status") == "banned"),
-        "risk": sum(1 for item in results if item.get("status") == "risk_blocked"),
-        "needs_login": sum(1 for item in results if item.get("status") == "needs_login"),
-        "failed": sum(1 for item in results if not item.get("ok")),
-        "uploaded": uploaded,
-    }
+    return refresh_lifecycle_service().summary(results, uploaded=uploaded)
 
 
 def refresh_lifecycle(payload: dict[str, Any]) -> dict[str, Any]:
-    items = payload.get("items")
-    if not isinstance(items, list):
-        items = []
-    if isinstance(payload.get("auth_file"), dict):
-        items.append({"auth_file": payload["auth_file"], "row": payload.get("row") if isinstance(payload.get("row"), dict) else {}})
-    if isinstance(payload.get("session_json"), dict):
-        items.append({"session_json": payload["session_json"], "row": payload.get("row") if isinstance(payload.get("row"), dict) else {}})
-    if not items:
-        return {"success": True, "results": [], "summary": lifecycle_summary([])}
-
-    max_items = max(1, min(int(payload.get("max_items") or payload.get("maxItems") or len(items) or 1), 100))
-    results = [refresh_lifecycle_item(item) for item in items[:max_items] if isinstance(item, dict)]
-    return {"success": True, "results": results, "summary": lifecycle_summary(results)}
+    return refresh_lifecycle_service().refresh(payload)
 
 
 def refresh_cpa_lifecycle(payload: dict[str, Any]) -> dict[str, Any]:

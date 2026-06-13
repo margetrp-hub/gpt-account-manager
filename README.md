@@ -8,11 +8,11 @@
 
 ![AI 分享群 QQ 群二维码](docs/images/qq-group-qrcode.jpg)
 
-## 1.0.3 当前版本说明
+## 1.0.4 当前版本说明
 
-- `1.0.3` 继续推进 `server.py` 分层，这一轮先把 CPA 远端交互和仓管操作独立成新的 `cpa_client.py`，把 OAuth 授权入口、auth file 上传/下载、401 巡检、批量修复、删除和生命周期刷新从主文件里抽出来。
-- `server.py` 里的 CPA 路由现在只保留薄入口，旧的 CPA helper 已清理掉，后面继续拆 `refresh_state_machine`、`http_handlers` 和更多 provider 时，边界会更清楚。
-- 新增 `tests/test_cpa_client.py`，直接覆盖 CPA OAuth 启动、auth 替换探测和 401 生命周期筛选，保证这次分层不是只挪代码、没有回归保护。
+- `1.0.4` 继续推进 `server.py` 分层，这一轮把凭证生命周期刷新独立成新的 `refresh_lifecycle_service.py`，集中处理 RT 刷新、session_token 刷新、access_token 探测、auth JSON 回写和汇总统计。
+- `server.py` 里的刷新生命周期现在只保留薄入口，`cpa_client.py` 也改成直接依赖新的生命周期 service，后面继续拆 `http_handlers`、任务预算、错误聚合和更多 provider 时，边界会更清楚。
+- 新增 `tests/test_refresh_lifecycle_service.py`，直接覆盖空请求、RT 成功刷新、封禁 RT 分类、access_token 探测和汇总计数，保证这次分层不是只挪代码、没有回归保护。
 - 前端这次重点补的是恢复轮询和局部刷新边界：邮箱同步、单个执行、重新入队、后台恢复轮询都更偏向局部更新，不再轻易把旧状态、隐藏筛选项或重复日志重新带回界面。
 - 这是项目 `1.0.x` 阶段的持续修补版本，核心工作流已经从“原型堆功能”走到了“可以长期部署和持续维护”的阶段。
 - 收信入口已经覆盖 Outlook / Microsoft、临时邮箱 JWT、其他 IMAP / POP3 邮箱三条主链路，页面命名、导入格式和错误分类也统一到了同一套交互里。
