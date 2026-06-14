@@ -5,6 +5,13 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from storage.activity_sqlite_store import (
+    append_login_history_entry as sqlite_append_login_history_entry,
+    append_refresh_result_entry as sqlite_append_refresh_result_entry,
+    save_login_history_snapshot as sqlite_save_login_history_snapshot,
+    save_refresh_results_snapshot as sqlite_save_refresh_results_snapshot,
+)
+
 
 def _iso_now() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
@@ -46,6 +53,7 @@ def load_refresh_results(path: Path) -> list[dict[str, Any]]:
 
 def save_refresh_results(path: Path, results: list[dict[str, Any]], *, limit: int) -> None:
     _save_rows(path, "results", results, limit=limit)
+    sqlite_save_refresh_results_snapshot(path, results, limit=limit)
 
 
 def append_refresh_result(
@@ -69,6 +77,7 @@ def append_refresh_result(
     results = [row for row in results if str(row.get("email", "") or "").lower() != email_lower]
     results.append(entry)
     save_refresh_results(path, results, limit=limit)
+    sqlite_append_refresh_result_entry(path, entry, limit=limit)
 
 
 def load_login_history(path: Path) -> list[dict[str, Any]]:
@@ -77,6 +86,7 @@ def load_login_history(path: Path) -> list[dict[str, Any]]:
 
 def save_login_history(path: Path, history: list[dict[str, Any]], *, limit: int) -> None:
     _save_rows(path, "history", history, limit=limit)
+    sqlite_save_login_history_snapshot(path, history, limit=limit)
 
 
 def append_login_history_entry(path: Path, job: dict[str, Any], *, limit: int) -> None:
@@ -97,3 +107,4 @@ def append_login_history_entry(path: Path, job: dict[str, Any], *, limit: int) -
     history = [row for row in history if row.get("job_id") != entry["job_id"]]
     history.append(entry)
     save_login_history(path, history, limit=limit)
+    sqlite_append_login_history_entry(path, entry, limit=limit)

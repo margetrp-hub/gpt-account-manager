@@ -1,5 +1,11 @@
 # 更新记录
 
+## 1.0.7
+
+- 开始把活动数据从纯 JSON 向更稳的持久化层推进：新增 `storage/activity_sqlite_store.py`，为刷新结果和登录历史生成 SQLite sidecar。
+- `storage/activity_store.py` 现在在保持原有 JSON 快照兼容的同时，会把刷新结果和登录历史双写到对应的 `.sqlite3` 文件里，为后续把活动查询和统计逐步切到 SQLite 做准备。
+- 新增 `tests/test_activity_store.py`，覆盖刷新结果和登录历史的快照写入、追加更新以及 SQLite sidecar 建表和去重行为，确保这次落地是“先稳接口，再迁存储”。
+
 ## 1.0.6
 
 - 继续完成 `server.py` 的 HTTP 分发拆层，新增总的 `http_handlers.py`，把公共 GET、管理员 GET、client API、workspace API、认证 POST 和管理员 POST 统一移入独立分发模块。

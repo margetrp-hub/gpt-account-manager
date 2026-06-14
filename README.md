@@ -8,11 +8,11 @@
 
 ![AI 分享群 QQ 群二维码](docs/images/qq-group-qrcode.jpg)
 
-## 1.0.6 当前版本说明
+## 1.0.7 当前版本说明
 
-- `1.0.6` 继续推进 `server.py` 分层，这一轮把剩余通用 HTTP 分发完整独立成新的 `http_handlers.py`，统一承接公共页、管理员 GET、client API、workspace API、认证 POST 和管理员 POST。
-- `server.py` 里的 `Handler` 现在主要保留底层壳子：`BaseHTTPRequestHandler` 入口、鉴权辅助、工作区解析、静态文件服务和 JSON 输出；业务路由不再继续塞进一个巨型 `if/elif`。
-- 新增 `tests/test_http_handlers.py`，直接覆盖 public-config、client accounts、workspace messages、auth login、client fetch、workspace import 和静态页兜底，保证这次分层不是只挪代码、没有回归保护。
+- `1.0.7` 开始把活动数据从纯 JSON 向更稳的持久化层推进，这一轮新增 `storage/activity_sqlite_store.py`，先为刷新结果和登录历史生成 SQLite sidecar。
+- `storage/activity_store.py` 目前保持原有 JSON 快照兼容，同时会双写刷新结果和登录历史到对应的 `.sqlite3` 文件里；这一步不改外部读取接口，先把活动数据稳定落盘，再为后续把活动查询和统计切到 SQLite 铺路。
+- 新增 `tests/test_activity_store.py`，直接覆盖刷新结果和登录历史的快照写入、追加更新以及 SQLite sidecar 建表和去重行为，保证这次演进不是只加文件、没有回归保护。
 - 前端这次重点补的是恢复轮询和局部刷新边界：邮箱同步、单个执行、重新入队、后台恢复轮询都更偏向局部更新，不再轻易把旧状态、隐藏筛选项或重复日志重新带回界面。
 - 这是项目 `1.0.x` 阶段的持续修补版本，核心工作流已经从“原型堆功能”走到了“可以长期部署和持续维护”的阶段。
 - 收信入口已经覆盖 Outlook / Microsoft、临时邮箱 JWT、其他 IMAP / POP3 邮箱三条主链路，页面命名、导入格式和错误分类也统一到了同一套交互里。
