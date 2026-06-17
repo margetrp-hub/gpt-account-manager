@@ -1072,7 +1072,6 @@ function mergeServerAccountsSnapshot(items) {
 }
 
 async function syncAccountsFromServer({ silent = false } = {}) {
-  if (!hasAdminToken()) return false;
   try {
     const previousActiveMailboxId = state.activeMailboxId;
     const previousActiveMailboxEmail = state.activeMailboxEmail;
