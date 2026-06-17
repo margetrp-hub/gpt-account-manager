@@ -147,7 +147,6 @@ const els = {
   importMailboxBtn: document.querySelector("#importMailboxBtn"),
   tabMailBtn: document.querySelector("#tabMailBtn"),
   tabImportBtn: document.querySelector("#tabImportBtn"),
-  tabLoginBtn: document.querySelector("#tabLoginBtn"),
   tabLogsBtn: document.querySelector("#tabLogsBtn"),
   importModal: document.querySelector("#importModal"),
   importModalEyebrow: document.querySelector("#importModalEyebrow"),
@@ -201,24 +200,6 @@ const els = {
   mailStatusRow: document.querySelector("#mailStatusRow"),
   statusText: document.querySelector("#statusText"),
   pageSummary: document.querySelector("#pageSummary"),
-  loginConsole: document.querySelector("#loginConsole"),
-  loginSelectedBtn: document.querySelector("#loginSelectedBtn"),
-  loginRetryBtn: document.querySelector("#loginRetryBtn"),
-  exportCpaBtn: document.querySelector("#exportCpaBtn"),
-  exportSub2Btn: document.querySelector("#exportSub2Btn"),
-  cpaBaseUrl: document.querySelector("#cpaBaseUrl"),
-  cpaKey: document.querySelector("#cpaKey"),
-  cpaLimit: document.querySelector("#cpaLimit"),
-  scanCpaBtn: document.querySelector("#scanCpaBtn"),
-  scanSelectedMailBtn: document.querySelector("#scanSelectedMailBtn"),
-  clearAbnormalBtn: document.querySelector("#clearAbnormalBtn"),
-  loginTableBody: document.querySelector("#loginTableBody"),
-  loginTotal: document.querySelector("#loginTotal"),
-  loginIdle: document.querySelector("#loginIdle"),
-  loginRunning: document.querySelector("#loginRunning"),
-  loginSuccess: document.querySelector("#loginSuccess"),
-  loginFailed: document.querySelector("#loginFailed"),
-  loginPlanTypes: document.querySelector("#loginPlanTypes"),
   clientLogPanel: document.querySelector("#clientLogPanel"),
   clientLogList: document.querySelector("#clientLogList"),
   clearClientLogsBtn: document.querySelector("#clearClientLogsBtn"),
@@ -1173,7 +1154,6 @@ function setActiveView(view) {
   state.activeView = view;
   state.page = 1;
   state.mailboxPage = 1;
-  els.loginConsole.hidden = view !== "login";
   els.clientLogPanel.hidden = view !== "logs";
   els.mailSearchStrip.hidden = view !== "mail";
   els.mailStatusRow.hidden = view !== "mail";
@@ -1181,16 +1161,12 @@ function setActiveView(view) {
   els.importMailboxBtn.textContent = "导入邮箱";
   els.mailboxSearch.placeholder = "搜索邮箱";
   document.querySelectorAll(".module-tab").forEach((item) => item.classList.remove("active"));
-  if (view === "login") {
-    els.tabLoginBtn?.classList.add("active");
-    els.tabLoginBtn?.setAttribute("aria-current", "page");
-  } else if (view === "logs") {
+  if (view === "logs") {
     els.tabLogsBtn?.classList.add("active");
   } else {
     els.tabMailBtn.classList.add("active");
     els.tabMailBtn.setAttribute("aria-current", "page");
   }
-  if (view !== "login") els.tabLoginBtn?.removeAttribute("aria-current");
   if (view !== "mail") els.tabMailBtn.removeAttribute("aria-current");
   renderAll();
 }
@@ -3297,7 +3273,6 @@ function groupAccountsByImportDate() {
 els.importMailboxBtn.addEventListener("click", () => openImportDialog("auto"));
 els.mailboxControlsToggle?.addEventListener("click", () => toggleMailboxControls());
 els.tabImportBtn?.addEventListener("click", () => openImportDialog("auto"));
-els.tabLoginBtn?.addEventListener("click", () => setActiveView("login"));
 els.tabLogsBtn?.addEventListener("click", () => setActiveView("logs"));
 els.tabMailBtn.addEventListener("click", () => setActiveView("mail"));
 els.importServiceSelect.addEventListener("change", updateImportDialogCopy);
@@ -3439,22 +3414,6 @@ els.copyCodeBtn.addEventListener("click", copyActiveCode);
 els.deleteMessageBtn.addEventListener("click", deleteActiveMessage);
 els.deleteFilteredBtn?.addEventListener("click", deleteFilteredMessages);
 els.enqueueSelectedRefreshBtn?.addEventListener("click", enqueueSelectedMailboxRefresh);
-els.scanCpaBtn.addEventListener("click", scanCpaAbnormal);
-els.scanSelectedMailBtn.addEventListener("click", scanSelectedMailboxes);
-els.clearAbnormalBtn.addEventListener("click", () => {
-  state.abnormalRows = [];
-  state.selectedAbnormal.clear();
-  state.loginJobs.clear();
-  saveAbnormalRows();
-  renderLoginTable();
-});
-els.cpaBaseUrl.addEventListener("change", saveCpaSettings);
-els.cpaKey.addEventListener("change", saveCpaSettings);
-els.cpaLimit.addEventListener("change", saveCpaSettings);
-els.loginSelectedBtn.addEventListener("click", () => startLoginForRows(selectedAbnormalRows()));
-els.loginRetryBtn.addEventListener("click", () => startLoginForRows(selectedAbnormalRows({ failedOnly: true })));
-els.exportCpaBtn.addEventListener("click", () => exportCredentialJson("cpa"));
-els.exportSub2Btn.addEventListener("click", () => exportCredentialJson("sub2api"));
 els.clearClientLogsBtn.addEventListener("click", () => {
   els.clientLogList.innerHTML = '<div class="client-log-item">等待操作。</div>';
 });

@@ -163,64 +163,6 @@
           <span id="pageSummary">0 封邮件</span>
         </div>
 
-        <section class="login-console" id="loginConsole">
-          <div class="section-head">
-            <div>
-              <h2>异常扫描台</h2>
-              <p>先扫描 CPA 401，或把左侧选中的邮箱加入异常列表，再统一送入刷新队列。</p>
-            </div>
-            <div class="login-actions">
-              <button id="loginSelectedBtn" class="primary" type="button">加入选中队列</button>
-              <button id="loginRetryBtn" type="button">失败加入队列</button>
-              <button id="exportCpaBtn" type="button">导出 CPA JSON</button>
-              <button id="exportSub2Btn" type="button">导出 sub2api JSON</button>
-            </div>
-          </div>
-          <div class="cpa-scan-grid">
-            <label>
-              <span>CPA 地址</span>
-              <input id="cpaBaseUrl" placeholder="http://127.0.0.1:8317">
-            </label>
-            <label>
-              <span>管理密钥</span>
-              <input id="cpaKey" type="password" placeholder="只保存在本地浏览器">
-            </label>
-            <label>
-              <span>扫描数量</span>
-              <input id="cpaLimit" type="number" min="1" max="500" value="50">
-            </label>
-            <div class="cpa-scan-actions">
-              <button id="scanCpaBtn" type="button">扫描 CPA 401</button>
-              <button id="scanSelectedMailBtn" type="button">加入选中邮箱</button>
-              <button id="clearAbnormalBtn" class="ghost danger" type="button">清空异常</button>
-            </div>
-          </div>
-          <div class="login-stats">
-            <span class="plan-summary-stat">本次巡检账号 <strong id="loginTotal">0</strong><small id="loginPlanTypes">FREE 0 · PLUS 0 · TEAM 0 · PROX5 0 · PROX20 0</small></span>
-            <span>等待 <strong id="loginIdle">0</strong></span>
-            <span>刷新中 <strong id="loginRunning">0</strong></span>
-            <span>成功 <strong id="loginSuccess">0</strong></span>
-            <span>失败 <strong id="loginFailed">0</strong></span>
-          </div>
-          <div class="login-table-wrap">
-            <table class="login-table">
-              <thead>
-                <tr>
-                  <th>选择</th>
-                  <th>账号</th>
-                  <th>来源</th>
-                  <th>状态</th>
-                  <th>错误</th>
-                  <th>操作</th>
-                </tr>
-              </thead>
-              <tbody id="loginTableBody">
-                <tr><td colspan="6" class="empty-cell">先扫描 CPA 异常，或加入左侧选中的邮箱。</td></tr>
-              </tbody>
-            </table>
-          </div>
-        </section>
-
         <section class="client-log-panel" id="clientLogPanel" hidden>
           <div class="section-head">
             <h2>运行日志</h2>
