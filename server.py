@@ -463,6 +463,37 @@ def workspace_message_row_key(row: dict[str, Any]) -> str:
     return key if key.replace("|", "").strip() else json_row_fallback_key(row)
 
 
+def usage_summary() -> dict[str, Any]:
+    now = datetime.datetime.now(datetime.UTC)
+    active_cutoff = now - datetime.timedelta(hours=24)
+    workspaces_total = 0
+    workspaces_active = 0
+    latest_active_at = ""
+    if WORKSPACES_DIR.exists():
+        for item in WORKSPACES_DIR.iterdir():
+            if not item.is_dir():
+                continue
+            workspaces_total += 1
+            latest_ts = 0.0
+            for filename in ("accounts.json", "temp_addresses.json", "generic_accounts.json", "messages.json", "refresh_results.json", "login_history.json"):
+                target = item / filename
+                if target.exists():
+                    latest_ts = max(latest_ts, target.stat().st_mtime)
+            if latest_ts <= 0:
+                continue
+            latest_dt = datetime.datetime.fromtimestamp(latest_ts, datetime.UTC)
+            latest_iso = latest_dt.isoformat().replace("+00:00", "Z")
+            if latest_iso > latest_active_at:
+                latest_active_at = latest_iso
+            if latest_dt >= active_cutoff:
+                workspaces_active += 1
+    return {
+        "workspace_total": workspaces_total,
+        "workspace_active_24h": workspaces_active,
+        "latest_workspace_activity": latest_active_at,
+    }
+
+
 def health_payload() -> dict[str, Any]:
     return {
         "ok": True,
@@ -501,6 +532,7 @@ def health_payload() -> dict[str, Any]:
             "static": str(STATIC_DIR),
             "data": str(DATA_DIR),
         },
+        "usage": usage_summary(),
     }
 
 

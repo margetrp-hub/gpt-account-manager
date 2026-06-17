@@ -174,6 +174,8 @@ const els = {
   mailboxCategoryFilter: document.querySelector("#mailboxCategoryFilter"),
   mailboxSearch: document.querySelector("#mailboxSearch"),
   mailboxList: document.querySelector("#mailboxList"),
+  usageBadge: document.querySelector("#usageBadge"),
+  usageCount: document.querySelector("#usageCount"),
   mailboxPageSize: document.querySelector("#mailboxPageSize"),
   mailboxPrevPage: document.querySelector("#mailboxPrevPage"),
   mailboxNextPage: document.querySelector("#mailboxNextPage"),
@@ -549,6 +551,24 @@ function apiHeaders() {
 
 function hasAdminToken() {
   return Boolean(rememberedAdminToken());
+}
+
+async function loadUsageBadge() {
+  if (!els.usageCount) return;
+  try {
+    const response = await fetch(`/health${hasAdminToken() ? `?token=${encodeURIComponent(rememberedAdminToken())}` : ""}`, {
+      headers: hasAdminToken() ? {} : undefined,
+      cache: "no-store",
+    });
+    const data = await readJsonResponse(response, "读取使用人数失败");
+    const count = Number(data?.usage?.workspace_active_24h ?? 0);
+    els.usageCount.textContent = Number.isFinite(count) ? String(count) : "--";
+    if (els.usageBadge && data?.usage?.latest_workspace_activity) {
+      els.usageBadge.title = `最近 24 小时活跃工作区：${count}\n最近活动：${data.usage.latest_workspace_activity}`;
+    }
+  } catch {
+    els.usageCount.textContent = "--";
+  }
 }
 
 function accountHasMaskedCredential(account) {
@@ -3496,6 +3516,7 @@ const debouncedMessageSearch = scheduler?.debounce?.(() => {
 });
 
 renderAll();
+loadUsageBadge();
 setActiveView("mail");
 loadServerMessages({ silent: true });
 
