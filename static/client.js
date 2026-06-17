@@ -247,42 +247,6 @@ localStorage.removeItem(STORAGE_KEYS.messages);
 migrateLegacyStorageKeys(["accounts", "categories", "ignoredMessages", "refreshQueue", "abnormalRows", "mailboxControlsCollapsed"]);
 repairLocalStorageKeys(Object.values(STORAGE_KEYS).filter((key) => key !== STORAGE_KEYS.messages));
 
-const storedAccounts = loadJson(STORAGE_KEYS.accounts, []);
-const normalizedAccounts = normalizeStoredAccounts(storedAccounts);
-if (JSON.stringify(storedAccounts) !== JSON.stringify(normalizedAccounts)) {
-  saveJson(STORAGE_KEYS.accounts, normalizedAccounts);
-}
-
-const state = {
-  accounts: normalizedAccounts,
-  categories: normalizeStoredCategories(loadJson(STORAGE_KEYS.categories, [])),
-  messages: [],
-  messageTotal: 0,
-  hiddenMessageCount: 0,
-  messagesLoading: false,
-  ignoredMessageKeys: new Set(loadJson(STORAGE_KEYS.ignoredMessages, [])),
-  abnormalRows: normalizeStoredAbnormalRows(loadJson(STORAGE_KEYS.abnormalRows, [])),
-  selectedAbnormal: new Set(),
-  selected: new Set(),
-  activeMessageKey: "",
-  activeMailboxId: "",
-  activeMailboxEmail: "",
-  activeImportSource: "",
-  mailboxSourceFilter: "all",
-  activeView: "mail",
-  loginJobs: new Map(),
-  loginPoller: undefined,
-  loginPollInFlight: false,
-  page: 1,
-  mailboxPage: 1,
-  lastFetchMessageCount: 0,
-  mailboxControlsCollapsed: loadJson(STORAGE_KEYS.mailboxControlsCollapsed, true) !== false,
-  mailboxSyncRequestId: 0,
-  filteredAccountsCacheKey: "",
-  filteredAccountsCacheRows: [],
-};
-const pendingSaveTimers = new Map();
-const saveScheduler = base?.createPendingSaveScheduler?.((key, value) => saveJson(key, value)) || null;
 let mailboxWorkspace = null;
 let mailboxAccountModel = null;
 let mailboxImportHelper = null;
@@ -360,6 +324,43 @@ refreshQueueHelper = refreshQueueModel?.createRefreshQueueModel?.({
   cpaBaseUrl: () => els.cpaBaseUrl?.value.trim() || "",
   cpaManagementKey: () => els.cpaKey?.value || "",
 });
+
+const storedAccounts = loadJson(STORAGE_KEYS.accounts, []);
+const normalizedAccounts = normalizeStoredAccounts(storedAccounts);
+if (JSON.stringify(storedAccounts) !== JSON.stringify(normalizedAccounts)) {
+  saveJson(STORAGE_KEYS.accounts, normalizedAccounts);
+}
+
+const state = {
+  accounts: normalizedAccounts,
+  categories: normalizeStoredCategories(loadJson(STORAGE_KEYS.categories, [])),
+  messages: [],
+  messageTotal: 0,
+  hiddenMessageCount: 0,
+  messagesLoading: false,
+  ignoredMessageKeys: new Set(loadJson(STORAGE_KEYS.ignoredMessages, [])),
+  abnormalRows: normalizeStoredAbnormalRows(loadJson(STORAGE_KEYS.abnormalRows, [])),
+  selectedAbnormal: new Set(),
+  selected: new Set(),
+  activeMessageKey: "",
+  activeMailboxId: "",
+  activeMailboxEmail: "",
+  activeImportSource: "",
+  mailboxSourceFilter: "all",
+  activeView: "mail",
+  loginJobs: new Map(),
+  loginPoller: undefined,
+  loginPollInFlight: false,
+  page: 1,
+  mailboxPage: 1,
+  lastFetchMessageCount: 0,
+  mailboxControlsCollapsed: loadJson(STORAGE_KEYS.mailboxControlsCollapsed, true) !== false,
+  mailboxSyncRequestId: 0,
+  filteredAccountsCacheKey: "",
+  filteredAccountsCacheRows: [],
+};
+const pendingSaveTimers = new Map();
+const saveScheduler = base?.createPendingSaveScheduler?.((key, value) => saveJson(key, value)) || null;
 
 localStorage.removeItem("ctgptm.mail.tempWorkerUrl");
 
