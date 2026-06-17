@@ -294,9 +294,9 @@ let refreshQueueHelper = null;
 
 const cpaSettings = loadJson(STORAGE_KEYS.cpaSettings, {});
 const tempSettings = loadJson(STORAGE_KEYS.tempSettings, {});
-els.cpaBaseUrl.value = cpaSettings.base_url || "";
-els.cpaKey.value = cpaSettings.management_key || "";
-els.cpaLimit.value = cpaSettings.max_items || "50";
+if (els.cpaBaseUrl) els.cpaBaseUrl.value = cpaSettings.base_url || "";
+if (els.cpaKey) els.cpaKey.value = cpaSettings.management_key || "";
+if (els.cpaLimit) els.cpaLimit.value = cpaSettings.max_items || "50";
 els.importTempApi.value = normalizeTempWorkerUrl(tempSettings.base_url || DEFAULT_TEMP_WORKER_URL);
 els.importTempSitePassword.value = tempSettings.site_password || "";
 if (tempSettings.base_url && tempSettings.base_url !== els.importTempApi.value) {
@@ -909,6 +909,7 @@ function saveAbnormalRows() {
 }
 
 function saveCpaSettings() {
+  if (!els.cpaBaseUrl || !els.cpaKey || !els.cpaLimit) return;
   saveJson(STORAGE_KEYS.cpaSettings, {
     base_url: els.cpaBaseUrl.value.trim(),
     management_key: els.cpaKey.value,
@@ -2358,6 +2359,7 @@ async function scanSelectedMailboxes() {
 }
 
 async function scanCpaAbnormal() {
+  if (!els.cpaBaseUrl || !els.cpaKey || !els.cpaLimit || !els.scanCpaBtn) return;
   const baseUrl = els.cpaBaseUrl.value.trim();
   const managementKey = els.cpaKey.value.trim();
   if (!baseUrl || !managementKey) {
@@ -2387,7 +2389,6 @@ async function scanCpaAbnormal() {
       "info"
     );
     toast(`巡检到 ${rows.length} 个异常，新增 ${added} 个`);
-    setActiveView("login");
     renderLoginTable();
   } catch (error) {
     addClientLog(`CPA 扫描失败：${error.message || "未知错误"}`, "error");
@@ -2473,6 +2474,7 @@ async function restoreLocalData(file) {
 }
 
 function exportCredentialJson(format) {
+  if (!els.loginTableBody) return;
   const rows = selectedAbnormalRows()
     .map((row) => ({ row, authFile: rowAuthFile(row) }))
     .filter((item) => item.authFile);
@@ -3414,7 +3416,7 @@ els.copyCodeBtn.addEventListener("click", copyActiveCode);
 els.deleteMessageBtn.addEventListener("click", deleteActiveMessage);
 els.deleteFilteredBtn?.addEventListener("click", deleteFilteredMessages);
 els.enqueueSelectedRefreshBtn?.addEventListener("click", enqueueSelectedMailboxRefresh);
-els.clearClientLogsBtn.addEventListener("click", () => {
+els.clearClientLogsBtn?.addEventListener("click", () => {
   els.clientLogList.innerHTML = '<div class="client-log-item">等待操作。</div>';
 });
 els.loginTableBody?.addEventListener("click", (event) => {
