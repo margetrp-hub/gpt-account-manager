@@ -3482,10 +3482,18 @@ const debouncedMessageSearch = scheduler?.debounce?.(() => {
   input.addEventListener("change", reloadMessages);
 });
 
-renderAll();
-loadUsageBadge();
-setActiveView("mail");
-loadServerMessages({ silent: true });
+async function initializeMailboxHome() {
+  renderAll();
+  loadUsageBadge();
+  setActiveView("mail");
+  await syncAccountsFromServer({ silent: true });
+  await loadServerMessages({ silent: true });
+}
+
+initializeMailboxHome().catch((error) => {
+  console.error("initializeMailboxHome failed", error);
+  addClientLog(`页面初始化失败：${error?.message || "unknown"}`, "error");
+});
 
 
 
