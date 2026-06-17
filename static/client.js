@@ -259,14 +259,6 @@ const tempSettings = loadJson(STORAGE_KEYS.tempSettings, {});
 if (els.cpaBaseUrl) els.cpaBaseUrl.value = cpaSettings.base_url || "";
 if (els.cpaKey) els.cpaKey.value = cpaSettings.management_key || "";
 if (els.cpaLimit) els.cpaLimit.value = cpaSettings.max_items || "50";
-els.importTempApi.value = normalizeTempWorkerUrl(tempSettings.base_url || DEFAULT_TEMP_WORKER_URL);
-els.importTempSitePassword.value = tempSettings.site_password || "";
-if (tempSettings.base_url && tempSettings.base_url !== els.importTempApi.value) {
-  saveJson(STORAGE_KEYS.tempSettings, {
-    ...tempSettings,
-    base_url: els.importTempApi.value,
-  });
-}
 
 mailboxAccountModel = window.GAM?.mailboxAccountModel?.createMailboxAccountModel?.({
   defaultTempWorkerUrl: DEFAULT_TEMP_WORKER_URL,
@@ -324,6 +316,15 @@ refreshQueueHelper = refreshQueueModel?.createRefreshQueueModel?.({
   cpaBaseUrl: () => els.cpaBaseUrl?.value.trim() || "",
   cpaManagementKey: () => els.cpaKey?.value || "",
 });
+
+els.importTempApi.value = normalizeTempWorkerUrl(tempSettings.base_url || DEFAULT_TEMP_WORKER_URL);
+els.importTempSitePassword.value = tempSettings.site_password || "";
+if (tempSettings.base_url && tempSettings.base_url !== els.importTempApi.value) {
+  saveJson(STORAGE_KEYS.tempSettings, {
+    ...tempSettings,
+    base_url: els.importTempApi.value,
+  });
+}
 
 const storedAccounts = loadJson(STORAGE_KEYS.accounts, []);
 const normalizedAccounts = normalizeStoredAccounts(storedAccounts);
