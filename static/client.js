@@ -1,15 +1,17 @@
 const WORKSPACE_ID_STORAGE_KEY = "ctgptm.workspaceId";
 const DEFAULT_WORKSPACE_ID = "ws_33851931ac0e448da66758fa28a05825";
-const FORCE_PRIMARY_WORKSPACE = true;
+const FORCE_PRIMARY_WORKSPACE_PARAM = "force_workspace";
 
 function bootstrapWorkspaceId() {
+  const query = new URLSearchParams(window.location.search);
+  const forcedWorkspace = String(query.get(FORCE_PRIMARY_WORKSPACE_PARAM) || "").trim();
+  if (/^[A-Za-z0-9][A-Za-z0-9_.-]{5,63}$/.test(forcedWorkspace)) {
+    localStorage.setItem(WORKSPACE_ID_STORAGE_KEY, forcedWorkspace);
+    return forcedWorkspace;
+  }
   const existing = window.GAM?.base?.getWorkspaceId?.(WORKSPACE_ID_STORAGE_KEY)
     || localStorage.getItem(WORKSPACE_ID_STORAGE_KEY)
     || DEFAULT_WORKSPACE_ID;
-  if (FORCE_PRIMARY_WORKSPACE && existing !== DEFAULT_WORKSPACE_ID) {
-    localStorage.setItem(WORKSPACE_ID_STORAGE_KEY, DEFAULT_WORKSPACE_ID);
-    return DEFAULT_WORKSPACE_ID;
-  }
   if (/^[A-Za-z0-9][A-Za-z0-9_.-]{5,63}$/.test(existing)) return existing;
   const next = `ws_${crypto.randomUUID().replace(/-/g, "")}`;
   localStorage.setItem(WORKSPACE_ID_STORAGE_KEY, next);
