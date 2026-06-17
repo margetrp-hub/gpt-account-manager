@@ -549,10 +549,12 @@ async function loadUsageBadge() {
       cache: "no-store",
     });
     const data = await readJsonResponse(response, "读取使用人数失败");
-    const count = Number(data?.usage?.workspace_active_24h ?? 0);
-    els.usageCount.textContent = Number.isFinite(count) ? String(count) : "--";
-    if (els.usageBadge && data?.usage?.latest_workspace_activity) {
-      els.usageBadge.title = `最近 24 小时活跃工作区：${count}\n最近活动：${data.usage.latest_workspace_activity}`;
+    const total = Number(data?.usage?.workspace_total ?? 0);
+    const active = Number(data?.usage?.workspace_active_24h ?? 0);
+    els.usageCount.textContent = Number.isFinite(total) ? String(total) : "--";
+    if (els.usageBadge) {
+      const latest = data?.usage?.latest_workspace_activity || "-";
+      els.usageBadge.title = `总工作区：${Number.isFinite(total) ? total : "--"}\n最近 24 小时活跃：${Number.isFinite(active) ? active : "--"}\n最近活动：${latest}`;
     }
   } catch {
     els.usageCount.textContent = "--";
