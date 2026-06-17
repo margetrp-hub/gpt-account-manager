@@ -121,6 +121,7 @@ class HttpHandlersTests(unittest.TestCase):
             cpa_http_handlers=self.cpa,
             health_payload=lambda: {"ok": True},
             network_health_payload=lambda: {"network": "ok"},
+            public_stats_payload=lambda: {"ok": True, "usage": {"workspace_active_24h": 3}},
             upgrade_status_payload=lambda: {"status": "idle"},
             get_client_mail_fetch_job=lambda job_id, workspace: {"job_id": job_id, "workspace": workspace},
             send_workspace_messages_json=lambda handler, workspace_id, **kwargs: handler.send_json({"workspace": workspace_id, "messages": []}),
