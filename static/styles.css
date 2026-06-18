@@ -2644,35 +2644,76 @@ body.mailbox-controls-collapsed .mailbox-panel {
 }
 
 .mail-list-panel .section-head {
-  align-items: flex-start;
-  flex-wrap: wrap;
+  display: grid;
+  grid-template-columns: 1fr;
+  align-items: stretch;
   gap: 8px;
   margin-bottom: 8px;
 }
 
 .mail-list-panel .section-head h2 {
-  flex: 0 0 auto;
+  min-width: 0;
 }
 
 .mail-list-panel .pager-tools {
-  flex: 1 1 220px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  width: 100%;
+  min-width: 0;
+  gap: 6px;
+}
+
+.mail-list-panel .pager-filters,
+.mail-list-panel .pager-actions {
+  width: 100%;
+  min-width: 0;
+}
+
+.mail-list-panel .pager-filters {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 72px;
+  gap: 6px;
+}
+
+.mail-list-panel .pager-actions {
+  display: grid;
+  grid-template-columns: 28px minmax(36px, max-content) 28px minmax(0, 1fr);
+  align-items: center;
+  gap: 4px;
 }
 
 .pager-filters select:first-child {
-  flex: 1 1 132px;
+  min-width: 0;
 }
 
 .pager-filters select:last-child {
-  flex: 0 0 84px;
+  min-width: 0;
 }
 
-.pager-tools .ghost.danger {
+.mail-list-panel .pager-tools select,
+.mail-list-panel .pager-tools button {
+  height: 28px;
+  min-height: 28px;
+  padding: 0 7px;
+  font-size: 11px;
+}
+
+.mail-list-panel #pageText {
+  min-width: 0;
+  text-align: center;
+  white-space: nowrap;
+  color: #667792;
+  font-size: 11px;
+  font-weight: 850;
+}
+
+.mail-list-panel .pager-tools .ghost.danger {
   width: auto;
-  min-width: 56px;
+  min-width: 0;
   max-width: 100%;
-  flex: 0 1 auto;
   padding: 0 8px;
   white-space: nowrap;
+  justify-self: end;
 }
 
 .detail-actions {
