@@ -1,5 +1,12 @@
 # 更新记录
 
+## 1.3.3
+
+- 重做凭证刷新页的长效手机区：平台连接、手机号保存、批量导入和已绑定号码收敛为一条紧凑流程，移除重复的“手机号对照单”，未选中刷新账号时不再占用手动填码区域。
+- HeroSMS 已补齐官方 SMS-Activate 兼容协议中的 `getBalance`、`getStatusV2`、`getActiveActivations`；SMSBower 补齐 `getBalance`、`getStatus`、`getActiveActivations`。现在可验证 API Key、同步已有活跃订单，并将订单号、号码、服务和国家信息合并进本地手机池。
+- 修复平台 JSON 错误分类：SMSBower 的 `No access` 会明确显示为“接码平台密钥无效”。同时订单号、手机号、余额等元数据不再被误判为短信验证码。
+- 新增 `docs/phone-providers.md`，记录内置平台端点、已支持操作、自定义 API 占位符和不支持的边界。
+
 ## 1.3.1
 
 - 修复邮箱服务首页左侧邮件列表顶部工具条在窄列下重叠的问题：邮件类型、每页数量、翻页和批量删除现在会按两行紧凑网格排列。

@@ -150,6 +150,8 @@ class HttpHandlersTests(unittest.TestCase):
             import_generic_accounts=lambda payload, workspace: {"workspace": workspace, "generic": payload},
             delete_workspace_mail_credentials=lambda payload, workspace: {"workspace": workspace, "deleted": payload},
             poll_phone_code=lambda payload: {"code": "123456", "payload": payload},
+            phone_provider_balance=lambda payload: {"balance": "12.50", "payload": payload},
+            phone_provider_active_activations=lambda payload: {"items": [], "payload": payload},
             extract_admin_jwts=lambda payload: {"jwts": payload},
             push_public_pool=lambda payload: {"pushed": payload},
             create_upgrade_request=lambda payload: {"upgrade": payload},
@@ -281,6 +283,19 @@ class HttpHandlersTests(unittest.TestCase):
         self.assertEqual(status, HTTPStatus.OK)
         self.assertEqual(payload["workspace"], "ws_demo")
         self.assertEqual(payload["mail_code"], {"email": "a@example.com", "live": True})
+
+    def test_phone_provider_routes_forward_payload(self):
+        handlers = self.make_handlers()
+        balance = DummyHandler(path="/client-api/phone-provider/balance", payload={"provider": "herosms"})
+        activations = DummyHandler(path="/client-api/phone-provider/active-activations", payload={"provider": "smsbower"})
+
+        handlers.handle_post(balance)
+        handlers.handle_post(activations)
+
+        self.assertEqual(balance.sent[0][0]["balance"], "12.50")
+        self.assertEqual(balance.sent[0][0]["payload"], {"provider": "herosms"})
+        self.assertEqual(activations.sent[0][0]["items"], [])
+        self.assertEqual(activations.sent[0][0]["payload"], {"provider": "smsbower"})
 
     def test_workspace_import_post_routes_to_workspace_service(self):
         handlers = self.make_handlers()

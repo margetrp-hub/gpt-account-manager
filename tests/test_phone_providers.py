@@ -73,6 +73,48 @@ class PhoneProviderTests(unittest.TestCase):
                 })
         self.assertEqual(activation_error.exception.error_code, "phone_activation_missing")
 
+    def test_smbower_json_no_access_is_classified_as_invalid_key(self):
+        with patch.object(s, "http_text", return_value=(200, '{"status":0,"message":"No access","data":[]}')):
+            with self.assertRaisesRegex(s.PhoneProviderError, "密钥无效") as error:
+                s.phone_provider_balance({"provider": "smsbower", "api_key": "test-key"})
+
+        self.assertEqual(error.exception.error_code, "phone_provider_key_invalid")
+
+    def test_provider_balance_and_active_orders_use_documented_actions(self):
+        with patch.object(s, "http_text", return_value=(200, '{"balance":"12.50"}')) as http_text:
+            balance = s.phone_provider_balance({"provider": "herosms", "api_key": "test-key"})
+
+        self.assertEqual(balance["balance"], "12.50")
+        self.assertIn("action=getBalance", http_text.call_args.args[0])
+
+        payload = '{"1001":{"activationId":"1001","phoneNumber":"+12025550123","activationStatus":"STATUS_WAIT_CODE","serviceCode":"service","countryName":"United States"}}'
+        with patch.object(s, "http_text", return_value=(200, payload)) as http_text:
+            activations = s.phone_provider_active_activations({"provider": "herosms", "api_key": "test-key"})
+
+        self.assertEqual(activations["items"], [{
+            "activation_id": "1001",
+            "phone": "+12025550123",
+            "status": "STATUS_WAIT_CODE",
+            "service": "service",
+            "country": "United States",
+            "created_at": "",
+        }])
+        self.assertIn("action=getActiveActivations", http_text.call_args.args[0])
+
+    def test_activation_metadata_is_not_mistaken_for_an_sms_code(self):
+        payload = '{"activationId":123456,"phoneNumber":"+12025550123","status":"STATUS_WAIT_CODE"}'
+        with patch.object(s, "http_text", return_value=(200, payload)):
+            result = s.poll_phone_code({
+                "phone": "+12025550123",
+                "provider": "herosms",
+                "api_key": "test-key",
+                "activation_id": "123456",
+            })
+
+        self.assertFalse(result["found"])
+        self.assertEqual(result["code"], "")
+        self.assertEqual(result["status"], "pending")
+
     def test_phone_pool_keeps_legacy_custom_and_standard_entries(self):
         entries = s.phone_pool_entries_from_payload({
             "phone_pool": [

@@ -1410,7 +1410,12 @@ SMS_MESSAGE_FIELDS = {
     "result",
     "value",
 }
-SMS_IGNORE_FIELDS = {"status", "statuscode", "httpstatus", "ret", "errno", "errorcode"}
+SMS_IGNORE_FIELDS = {
+    "status", "statuscode", "httpstatus", "ret", "errno", "errorcode",
+    "id", "activationid", "orderid", "requestid", "phone", "phonenumber", "number",
+    "country", "countrycode", "operator", "service", "servicecode", "cost",
+    "activationcost", "balance", "currency", "createdat", "updatedat", "expiresat",
+}
 
 
 def normalize_sms_field_name(value: str) -> str:
@@ -1508,6 +1513,19 @@ PHONE_PROVIDER_ENDPOINTS = {
     "smsbower": "https://smsbower.page/stubs/handler_api.php",
 }
 
+PHONE_PROVIDER_ACTIONS = {
+    "herosms": {
+        "balance": "getBalance",
+        "status": "getStatusV2",
+        "active": "getActiveActivations",
+    },
+    "smsbower": {
+        "balance": "getBalance",
+        "status": "getStatus",
+        "active": "getActiveActivations",
+    },
+}
+
 
 class PhoneProviderError(RuntimeError):
     def __init__(self, message: str, error_code: str = "phone_provider_request_failed") -> None:
@@ -1532,18 +1550,27 @@ def normalize_phone_provider(value: Any) -> str:
     return aliases[provider]
 
 
-def phone_provider_url(provider: str, *, endpoint: str, api_key: str, activation_id: str) -> str:
+def phone_provider_url(
+    provider: str,
+    *,
+    endpoint: str,
+    api_key: str,
+    operation: str,
+    activation_id: str = "",
+) -> str:
+    actions = PHONE_PROVIDER_ACTIONS.get(provider)
+    action = actions.get(operation) if actions else ""
+    if not action:
+        raise PhoneProviderError("接码平台不支持此操作", "phone_provider_operation_unsupported")
     base_url = coerce_text(endpoint) or PHONE_PROVIDER_ENDPOINTS[provider]
     parsed = urllib.parse.urlsplit(base_url)
     if parsed.scheme not in {"http", "https"} or not parsed.hostname:
         raise PhoneProviderError("接码平台地址必须是 http/https 地址", "phone_provider_endpoint_invalid")
     validate_remote_base_url(base_url)
     query = urllib.parse.parse_qsl(parsed.query, keep_blank_values=True)
-    query.extend([
-        ("api_key", api_key),
-        ("action", "getStatusV2" if provider == "herosms" else "getStatus"),
-        ("id", activation_id),
-    ])
+    query.extend([("api_key", api_key), ("action", action)])
+    if activation_id:
+        query.append(("id", activation_id))
     return urllib.parse.urlunsplit((
         parsed.scheme,
         parsed.netloc,
@@ -1553,33 +1580,52 @@ def phone_provider_url(provider: str, *, endpoint: str, api_key: str, activation
     ))
 
 
+def phone_provider_response_text(raw: str) -> str:
+    text = coerce_text(raw)
+    try:
+        payload = json.loads(text)
+    except Exception:
+        return text
+    if isinstance(payload, dict):
+        fragments = [coerce_text(payload.get(key)) for key in ("title", "message", "detail", "error", "error_description")]
+        return " ".join(fragment for fragment in fragments if fragment) or text
+    return text
+
+
 def phone_provider_failure(raw: str) -> PhoneProviderError | None:
-    status = coerce_text(raw).upper()
+    status = phone_provider_response_text(raw).upper()
     if not status:
         return PhoneProviderError("接码平台没有返回结果", "phone_provider_response_invalid")
-    if re.search(r"BAD[_ ]?KEY|INVALID[_ ]?(?:API[_ ]?)?KEY|KEY[_ ]?INVALID", status):
+    if re.search(r"BAD[_ ]?KEY|INVALID[_ ]?(?:API[_ ]?)?KEY|KEY[_ ]?INVALID|NO[_ ]?ACCESS|UNAUTHORIZED", status):
         return PhoneProviderError("接码平台密钥无效", "phone_provider_key_invalid")
     if re.search(r"NO[_ ]?BALANCE|INSUFFICIENT[_ ]?BALANCE", status):
         return PhoneProviderError("接码平台余额不足", "phone_provider_no_balance")
-    if re.search(r"NO[_ ]?ACTIVATION|ACTIVATION[_ ]?(?:NOT[_ ]?FOUND|CANCEL)|STATUS_CANCEL", status):
+    if re.search(r"NO[_ ]?ACTIVATION|WRONG[_ ]?ACTIVATION|ACTIVATION[_ ]?(?:NOT[_ ]?FOUND|CANCEL)|STATUS_CANCEL", status):
         return PhoneProviderError("接码订单不存在或已失效", "phone_activation_missing")
+    if re.search(r"BAD[_ ]?ACTION|UNSUPPORTED[_ ]?ACTION", status):
+        return PhoneProviderError("接码平台不支持此操作", "phone_provider_operation_unsupported")
     if re.search(r"(?:ACCESS|ERROR|FAILED|DENIED|FORBIDDEN)", status) and not re.search(r"WAIT|PENDING|STATUS_OK", status):
         return PhoneProviderError("接码平台返回异常", "phone_provider_response_invalid")
     return None
 
 
-def poll_standard_phone_provider(
+def request_standard_phone_provider(
     provider: str,
     *,
     endpoint: str,
     api_key: str,
-    activation_id: str,
-) -> dict[str, Any]:
+    operation: str,
+    activation_id: str = "",
+) -> tuple[int, str, Any]:
     if not api_key:
         raise PhoneProviderError("缺少接码平台密钥", "phone_provider_key_missing")
-    if not activation_id:
-        raise PhoneProviderError("缺少接码订单 ID", "phone_activation_missing")
-    url = phone_provider_url(provider, endpoint=endpoint, api_key=api_key, activation_id=activation_id)
+    url = phone_provider_url(
+        provider,
+        endpoint=endpoint,
+        api_key=api_key,
+        operation=operation,
+        activation_id=activation_id,
+    )
     try:
         http_status, text = http_text(url, timeout=30)
     except Exception as exc:
@@ -1591,9 +1637,28 @@ def poll_standard_phone_provider(
         raw_payload: Any = json.loads(text)
     except Exception:
         raw_payload = text
+    return http_status, text, raw_payload
+
+
+def poll_standard_phone_provider(
+    provider: str,
+    *,
+    endpoint: str,
+    api_key: str,
+    activation_id: str,
+) -> dict[str, Any]:
+    if not activation_id:
+        raise PhoneProviderError("缺少接码订单 ID", "phone_activation_missing")
+    http_status, text, raw_payload = request_standard_phone_provider(
+        provider,
+        endpoint=endpoint,
+        api_key=api_key,
+        operation="status",
+        activation_id=activation_id,
+    )
     extracted = extract_sms_code_payload(raw_payload)
     code = extracted.get("code", "")
-    status_text = coerce_text(text)
+    status_text = f"{text} {phone_provider_response_text(text)}"
     pending = bool(re.search(r"WAIT|PENDING|NO[_ ]?(?:SMS|CODE)|STATUS_WAIT", status_text, re.I))
     if not code and not pending and not isinstance(raw_payload, (dict, list)):
         raise PhoneProviderError("接码平台响应格式无法识别", "phone_provider_response_invalid")
@@ -1603,6 +1668,101 @@ def poll_standard_phone_provider(
         "message": extracted.get("message", "")[:500] if code else "等待验证码",
         "status": "found" if code else "pending",
         "http_status": http_status,
+    }
+
+
+def parse_phone_provider_balance(raw_payload: Any, raw_text: str) -> str:
+    candidates: list[Any] = []
+    if isinstance(raw_payload, dict):
+        candidates.extend(raw_payload.get(key) for key in ("balance", "amount", "value"))
+        data = raw_payload.get("data")
+        if isinstance(data, dict):
+            candidates.extend(data.get(key) for key in ("balance", "amount", "value"))
+    for candidate in candidates:
+        value = coerce_text(candidate)
+        if re.fullmatch(r"\d+(?:[.,]\d+)?", value):
+            return value.replace(",", ".")
+    match = re.search(r"(?:ACCESS_)?BALANCE\s*[:=]\s*(\d+(?:[.,]\d+)?)", raw_text, flags=re.I)
+    return match.group(1).replace(",", ".") if match else ""
+
+
+def phone_provider_balance(payload: dict[str, Any]) -> dict[str, Any]:
+    provider = normalize_phone_provider(payload.get("provider") or payload.get("phone_provider"))
+    if provider == "custom":
+        raise PhoneProviderError("自定义 API 不支持平台余额校验", "phone_provider_operation_unsupported")
+    api_key = coerce_text(payload.get("api_key") or payload.get("apiKey") or payload.get("phone_api_key"))
+    endpoint = coerce_text(payload.get("endpoint") or payload.get("provider_endpoint") or payload.get("phone_provider_endpoint"))
+    http_status, text, raw_payload = request_standard_phone_provider(
+        provider,
+        endpoint=endpoint,
+        api_key=api_key,
+        operation="balance",
+    )
+    balance = parse_phone_provider_balance(raw_payload, text)
+    if not balance:
+        raise PhoneProviderError("接码平台余额响应无法识别", "phone_provider_response_invalid")
+    return {
+        "success": True,
+        "provider": provider,
+        "balance": balance,
+        "http_status": http_status,
+        "checked_at": iso_now(),
+    }
+
+
+def normalize_phone_activation_items(raw_payload: Any) -> list[dict[str, str]]:
+    items: list[dict[str, str]] = []
+    seen: set[str] = set()
+
+    def visit(value: Any, fallback_id: str = "", depth: int = 0) -> None:
+        if depth > 5 or len(items) >= 500:
+            return
+        if isinstance(value, list):
+            for child in value:
+                visit(child, "", depth + 1)
+            return
+        if not isinstance(value, dict):
+            return
+        activation_id = coerce_text(first_text(value.get("activationId"), value.get("activation_id"), value.get("id"), fallback_id))
+        phone = coerce_text(first_text(value.get("phoneNumber"), value.get("phone"), value.get("number")))
+        if activation_id and phone:
+            key = f"{activation_id}:{normalize_phone_digits(phone)}"
+            if key not in seen:
+                seen.add(key)
+                items.append({
+                    "activation_id": activation_id,
+                    "phone": phone,
+                    "status": coerce_text(first_text(value.get("activationStatus"), value.get("status"))),
+                    "service": coerce_text(first_text(value.get("serviceCode"), value.get("service"))),
+                    "country": coerce_text(first_text(value.get("countryName"), value.get("country"), value.get("countryCode"))),
+                    "created_at": coerce_text(first_text(value.get("createdAt"), value.get("created_at"))),
+                })
+            return
+        for key, child in value.items():
+            visit(child, str(key), depth + 1)
+
+    visit(raw_payload)
+    return items
+
+
+def phone_provider_active_activations(payload: dict[str, Any]) -> dict[str, Any]:
+    provider = normalize_phone_provider(payload.get("provider") or payload.get("phone_provider"))
+    if provider == "custom":
+        raise PhoneProviderError("自定义 API 不支持订单同步", "phone_provider_operation_unsupported")
+    api_key = coerce_text(payload.get("api_key") or payload.get("apiKey") or payload.get("phone_api_key"))
+    endpoint = coerce_text(payload.get("endpoint") or payload.get("provider_endpoint") or payload.get("phone_provider_endpoint"))
+    http_status, _, raw_payload = request_standard_phone_provider(
+        provider,
+        endpoint=endpoint,
+        api_key=api_key,
+        operation="active",
+    )
+    return {
+        "success": True,
+        "provider": provider,
+        "items": normalize_phone_activation_items(raw_payload),
+        "http_status": http_status,
+        "checked_at": iso_now(),
     }
 
 
@@ -5967,6 +6127,8 @@ def http_handlers() -> HttpHandlers:
             import_generic_accounts=import_generic_accounts,
             delete_workspace_mail_credentials=delete_workspace_mail_credentials,
             poll_phone_code=poll_phone_code,
+            phone_provider_balance=phone_provider_balance,
+            phone_provider_active_activations=phone_provider_active_activations,
             extract_admin_jwts=extract_admin_jwts,
             push_public_pool=push_public_pool,
             create_upgrade_request=create_upgrade_request,

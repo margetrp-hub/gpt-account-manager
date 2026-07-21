@@ -58,6 +58,11 @@
           last_code: String(item?.last_code || item?.lastCode || ""),
           last_message: String(item?.last_message || item?.lastMessage || ""),
           last_checked_at: String(item?.last_checked_at || item?.lastCheckedAt || ""),
+          provider_status: String(item?.provider_status || item?.providerStatus || ""),
+          provider_service: String(item?.provider_service || item?.providerService || ""),
+          provider_country: String(item?.provider_country || item?.providerCountry || ""),
+          provider_created_at: String(item?.provider_created_at || item?.providerCreatedAt || ""),
+          provider_synced_at: String(item?.provider_synced_at || item?.providerSyncedAt || ""),
           status: String(item?.status || "idle"),
         };
       }).filter(Boolean);
@@ -78,6 +83,11 @@
         activation_id: item.activation_id,
         endpoint: item.endpoint,
         account_email: item.account_email || "",
+        provider_status: item.provider_status || "",
+        provider_service: item.provider_service || "",
+        provider_country: item.provider_country || "",
+        provider_created_at: item.provider_created_at || "",
+        provider_synced_at: item.provider_synced_at || "",
       }));
     }
 
@@ -142,8 +152,10 @@
     function phoneProviderSummary(item) {
       if (item.provider === "custom") return phoneProviderLabel(item.provider);
       const activation = String(item.activation_id || "");
-      const suffix = activation ? ` #${activation.slice(-4)}` : "";
-      return `${phoneProviderLabel(item.provider)}${suffix}`;
+      const suffix = activation ? ` #${activation.slice(-6)}` : "";
+      const service = String(item.provider_service || "").trim();
+      const country = String(item.provider_country || "").trim();
+      return [phoneProviderLabel(item.provider), service, country].filter(Boolean).join(" · ") + suffix;
     }
 
     function renderPhoneBindingList() {
@@ -163,7 +175,7 @@
         const email = item.account_email || "未绑定邮箱";
         const hint = item.last_code
           ? `最近验证码 ${item.last_code}${item.last_checked_at ? ` · ${formatPhoneTime(item.last_checked_at)}` : ""}`
-          : (item.status === "running" ? "正在取码" : (item.status === "error" ? "取码失败" : "等待取码"));
+          : (item.status === "running" ? "正在取码" : (item.status === "error" ? "取码失败" : (item.provider_status || "等待取码")));
         return `
           <div class="phone-binding-row">
             <strong>${escapeHtml(item.phone)}</strong>
@@ -185,7 +197,7 @@
       els.phonePoolList.innerHTML = state.phonePool.map((item) => {
         const status = item.last_code
           ? `最近验证码 ${item.last_code}${item.last_checked_at ? ` · ${formatPhoneTime(item.last_checked_at)}` : ""}`
-          : (item.status === "running" ? "正在取码" : (item.status === "error" ? "取码失败" : "等待取码"));
+          : (item.status === "running" ? "正在取码" : (item.status === "error" ? "取码失败" : (item.provider_status || "等待取码")));
         const mode = item.mode === "bound" ? "1对1" : "批量";
         const bound = item.account_email ? item.account_email : "未绑定账号";
         return `
@@ -249,6 +261,23 @@
       };
     }
 
+    function readPhoneProviderConnection() {
+      const provider = currentPhoneProvider();
+      const apiKey = els.phoneApiKey ? els.phoneApiKey.value.trim() : "";
+      const endpoint = els.phoneProviderEndpoint ? els.phoneProviderEndpoint.value.trim() : "";
+      if (provider === "custom") return { error: "自定义 API 不需要平台连接验证" };
+      if (!apiKey) return { error: "请填写平台 API Key" };
+      if (!validPhoneProviderEndpoint(endpoint)) return { error: "自定义平台地址必须是 http/https URL" };
+      return { provider, api_key: apiKey, endpoint };
+    }
+
+    function setPhoneProviderStatus(message = "", tone = "") {
+      if (!els.phoneProviderStatus) return;
+      els.phoneProviderStatus.textContent = message;
+      if (tone) els.phoneProviderStatus.dataset.tone = tone;
+      else delete els.phoneProviderStatus.dataset.tone;
+    }
+
     function syncPhoneProviderForm() {
       const provider = currentPhoneProvider();
       document.querySelectorAll("[data-phone-provider]").forEach((field) => {
@@ -257,6 +286,112 @@
       });
       if (els.phoneApiUrl) {
         els.phoneApiUrl.placeholder = "接码 API URL，例如 https://api.example.com/sms?phone={phone}";
+      }
+      if (provider === "custom") {
+        setPhoneProviderStatus("模板接口", "neutral");
+      } else {
+        setPhoneProviderStatus("内置兼容接口", "neutral");
+      }
+    }
+
+    async function verifyPhoneProvider() {
+      const connection = readPhoneProviderConnection();
+      if (connection.error) {
+        toast(connection.error);
+        return;
+      }
+      if (els.verifyPhoneProvider) els.verifyPhoneProvider.disabled = true;
+      setPhoneProviderStatus("正在验证", "running");
+      try {
+        const response = await fetch("/client-api/phone-provider/balance", {
+          method: "POST",
+          headers: apiHeaders(),
+          body: JSON.stringify(connection),
+        });
+        const data = await readJsonResponse(response, "平台验证失败");
+        const balance = data.balance ? `余额 ${data.balance}` : "验证成功";
+        setPhoneProviderStatus(balance, "success");
+        toast(`${phoneProviderLabel(connection.provider)} ${balance}`);
+      } catch (error) {
+        const details = error.details || { error: error.message || "平台验证失败", error_code: "phone_provider_balance_failed" };
+        setPhoneProviderStatus("验证失败", "error");
+        addLog("接码平台验证失败", "error", { error_code: details.error_code || "phone_provider_balance_failed" });
+        toast(details.error || "平台验证失败");
+      } finally {
+        if (els.verifyPhoneProvider) els.verifyPhoneProvider.disabled = false;
+      }
+    }
+
+    function activationStatusLabel(value) {
+      const raw = String(value || "").trim();
+      return raw ? `订单状态 ${raw}` : "已同步订单";
+    }
+
+    async function syncPhoneProviderActivations() {
+      const connection = readPhoneProviderConnection();
+      if (connection.error) {
+        toast(connection.error);
+        return;
+      }
+      if (els.syncPhoneProviderActivations) els.syncPhoneProviderActivations.disabled = true;
+      setPhoneProviderStatus("正在同步订单", "running");
+      try {
+        const response = await fetch("/client-api/phone-provider/active-activations", {
+          method: "POST",
+          headers: apiHeaders(),
+          body: JSON.stringify(connection),
+        });
+        const data = await readJsonResponse(response, "订单同步失败");
+        const items = Array.isArray(data.items) ? data.items : [];
+        let added = 0;
+        let updated = 0;
+        items.forEach((remote) => {
+          const phone = String(remote?.phone || "").trim();
+          const activationId = String(remote?.activation_id || "").trim();
+          if (!phone || !activationId) return;
+          const id = `phone:${phone.toLowerCase()}`;
+          const existing = state.phonePool.find((entry) => entry.id === id || phoneMatches(entry.phone, phone));
+          const next = {
+            ...(existing || {}),
+            id,
+            mode: existing?.mode || "batch",
+            phone,
+            provider: connection.provider,
+            api_url: "",
+            api_key: connection.api_key,
+            activation_id: activationId,
+            endpoint: connection.endpoint,
+            account_email: existing?.account_email || "",
+            provider_status: activationStatusLabel(remote.status),
+            provider_service: String(remote.service || "").trim(),
+            provider_country: String(remote.country || "").trim(),
+            provider_created_at: String(remote.created_at || "").trim(),
+            provider_synced_at: data.checked_at || new Date().toISOString(),
+            status: existing?.status || "idle",
+            last_code: existing?.last_code || "",
+            last_message: existing?.last_message || "",
+            last_checked_at: existing?.last_checked_at || "",
+          };
+          if (existing) {
+            Object.assign(existing, next);
+            updated += 1;
+          } else {
+            state.phonePool.push(next);
+            added += 1;
+          }
+        });
+        savePhonePool();
+        renderAll();
+        const summary = items.length ? `同步 ${items.length} 笔订单` : "没有活跃订单";
+        setPhoneProviderStatus(summary, items.length ? "success" : "neutral");
+        toast(`${summary}${items.length ? `：新增 ${added}，更新 ${updated}` : ""}`);
+      } catch (error) {
+        const details = error.details || { error: error.message || "订单同步失败", error_code: "phone_provider_sync_failed" };
+        setPhoneProviderStatus("同步失败", "error");
+        addLog("接码平台订单同步失败", "error", { error_code: details.error_code || "phone_provider_sync_failed" });
+        toast(details.error || "订单同步失败");
+      } finally {
+        if (els.syncPhoneProviderActivations) els.syncPhoneProviderActivations.disabled = false;
       }
     }
 
@@ -274,6 +409,10 @@
       }
       const selected = selectedSingleQueueRow();
       const isOneToOne = currentPhoneMode() !== "batch";
+      if (isOneToOne && !selected) {
+        toast("请先在刷新队列中勾选一个账号，再建立 1 对 1 绑定");
+        return;
+      }
       const accountEmail = isOneToOne && selected ? accountEmailKey(selected.email || selected.name) : "";
       const id = `phone:${phone.toLowerCase()}`;
       const existing = state.phonePool.find((item) => item.id === id || item.phone === phone);
@@ -548,6 +687,8 @@
       renderPhonePool,
       validPhoneApiUrl,
       syncPhoneProviderForm,
+      verifyPhoneProvider,
+      syncPhoneProviderActivations,
       addOrUpdatePhoneEntry,
       importPhoneBatchEntries,
       bindPhoneToSelected,

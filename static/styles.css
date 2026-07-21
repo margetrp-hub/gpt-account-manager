@@ -1590,15 +1590,14 @@ body.mailbox-controls-collapsed .mailbox-panel {
 
 .phone-pool-panel {
   display: grid;
-  gap: 5px;
-  padding: 6px 8px 8px;
+  gap: 7px;
+  padding: 8px;
   border: 0;
   border-radius: 0;
   background: transparent;
 }
 
-.phone-pool-head,
-.phone-pool-form,
+.phone-provider-toolbar,
 .phone-mode-tabs,
 .phone-code-panel,
 .phone-pool-row,
@@ -1608,32 +1607,80 @@ body.mailbox-controls-collapsed .mailbox-panel {
   gap: 7px;
 }
 
-.phone-pool-head {
-  justify-content: space-between;
+.phone-provider-toolbar {
+  display: grid;
+  grid-template-columns: auto auto auto minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
   min-width: 0;
-  color: #25405f;
-  font-size: 11px;
-  font-weight: 850;
 }
 
-.phone-pool-head span {
+.phone-provider-select {
+  min-width: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: #526983;
+  font-size: 11px;
+  font-weight: 850;
+  white-space: nowrap;
+}
+
+.phone-provider-select select {
+  min-height: 28px;
+  min-width: 124px;
+  padding: 3px 24px 3px 7px;
+  font-size: 11px;
+}
+
+.phone-provider-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.phone-provider-actions button {
+  min-height: 28px;
+  padding: 4px 7px;
+  color: #315a9d;
+  font-size: 11px;
+  font-weight: 850;
+  white-space: nowrap;
+}
+
+.phone-provider-status {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
   color: #64748b;
   font-size: 11px;
-  font-weight: 700;
+  font-weight: 800;
+  text-align: right;
 }
+
+.phone-provider-status[data-tone="running"] { color: #2563eb; }
+.phone-provider-status[data-tone="success"] { color: #15803d; }
+.phone-provider-status[data-tone="error"] { color: #c2410c; }
 
 .phone-pool-form {
   display: grid;
-  grid-template-columns: minmax(116px, 0.38fr) minmax(150px, 0.52fr) auto;
-  gap: 5px;
+  grid-template-columns: minmax(190px, 0.72fr) minmax(180px, 1fr) auto;
+  align-items: end;
+  gap: 6px;
+}
+
+.phone-pool-form label,
+.phone-provider-details label {
+  min-width: 0;
+  display: grid;
+  gap: 3px;
+  color: #526983;
+  font-size: 10px;
+  font-weight: 850;
 }
 
 .phone-pool-form input,
-.phone-pool-form select,
 .phone-provider-details input {
   min-height: 28px;
 }
@@ -1642,13 +1689,10 @@ body.mailbox-controls-collapsed .mailbox-panel {
   display: grid;
   align-items: center;
   gap: 5px;
-}
-
-.phone-provider-details {
   grid-template-columns: repeat(3, minmax(0, 1fr));
 }
 
-.phone-provider-details input[data-phone-provider="custom"] {
+.phone-provider-details label[data-phone-provider="custom"] {
   grid-column: 1 / -1;
 }
 
@@ -1705,13 +1749,54 @@ body.mailbox-controls-collapsed .mailbox-panel {
 
 .phone-batch-panel {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  gap: 5px;
-  align-items: stretch;
 }
 
-.phone-batch-panel textarea {
-  min-height: 36px;
+.phone-batch-import {
+  overflow: hidden;
+  border: 1px solid rgba(142, 165, 199, 0.18);
+  border-radius: 7px;
+  background: rgba(248, 251, 255, 0.54);
+}
+
+.phone-batch-import summary {
+  min-height: 27px;
+  display: flex;
+  align-items: center;
+  padding: 0 8px;
+  cursor: pointer;
+  color: #526983;
+  font-size: 11px;
+  font-weight: 850;
+  list-style: none;
+}
+
+.phone-batch-import summary::-webkit-details-marker {
+  display: none;
+}
+
+.phone-batch-import summary::before {
+  content: "+";
+  width: 16px;
+  display: inline-flex;
+  justify-content: center;
+  margin-right: 4px;
+  color: #2563eb;
+  font-size: 14px;
+}
+
+.phone-batch-import[open] summary::before {
+  content: "-";
+}
+
+.phone-batch-import > div {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 5px;
+  padding: 0 5px 5px;
+}
+
+.phone-batch-import textarea {
+  min-height: 46px;
   max-height: 72px;
   resize: none;
   padding: 6px 8px;
@@ -1723,8 +1808,25 @@ body.mailbox-controls-collapsed .mailbox-panel {
   line-height: 1.35;
 }
 
-.phone-batch-panel button {
-  min-height: 36px;
+.phone-batch-import button {
+  min-height: 46px;
+  white-space: nowrap;
+}
+
+.phone-binding-target {
+  min-width: 0;
+  min-height: 28px;
+  display: inline-flex;
+  align-items: center;
+  padding: 0 8px;
+  overflow: hidden;
+  border: 1px solid rgba(142, 165, 199, 0.22);
+  border-radius: 6px;
+  background: rgba(248, 251, 255, 0.72);
+  color: #526983;
+  font-size: 11px;
+  font-weight: 800;
+  text-overflow: ellipsis;
   white-space: nowrap;
 }
 
@@ -1774,83 +1876,8 @@ body.mailbox-controls-collapsed .mailbox-panel {
 .phone-pool-list {
   display: grid;
   gap: 4px;
-  max-height: 92px;
+  max-height: 148px;
   overflow: auto;
-}
-
-.phone-binding-panel {
-  display: grid;
-  gap: 5px;
-  padding-top: 2px;
-}
-
-.phone-binding-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  min-width: 0;
-}
-
-.phone-binding-head strong {
-  color: #25405f;
-  font-size: 11px;
-  font-weight: 900;
-}
-
-.phone-binding-head span {
-  min-width: 0;
-  color: #64748b;
-  font-size: 10.5px;
-  font-weight: 700;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.phone-binding-list {
-  display: grid;
-  gap: 4px;
-  max-height: 108px;
-  overflow: auto;
-}
-
-.phone-binding-row {
-  display: grid;
-  grid-template-columns: minmax(110px, 0.55fr) minmax(150px, 0.95fr) minmax(130px, 0.7fr);
-  gap: 8px;
-  align-items: center;
-  padding: 6px 7px;
-  border: 1px solid rgba(142, 165, 199, 0.18);
-  border-radius: 7px;
-  background: rgba(255, 255, 255, 0.64);
-}
-
-.phone-binding-row strong,
-.phone-binding-row span,
-.phone-binding-row em {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.phone-binding-row strong {
-  color: var(--ink);
-  font-size: 12px;
-  font-weight: 900;
-}
-
-.phone-binding-row span {
-  color: #315a9d;
-  font-size: 11px;
-  font-weight: 800;
-}
-
-.phone-binding-row em {
-  color: #64748b;
-  font-size: 10.5px;
-  font-style: normal;
 }
 
 .phone-pool-row {
@@ -5044,6 +5071,8 @@ body.modal-open {
   .pickup-import-panel,
   .phone-pool-form,
   .phone-provider-details,
+  .phone-provider-toolbar,
+  .phone-batch-import > div,
   .credential-hint-bar {
     grid-template-columns: 1fr;
   }
@@ -5060,10 +5089,8 @@ body.modal-open {
   }
 
   #cpaSyncStatus,
-  .phone-binding-head span,
-  .phone-binding-row strong,
-  .phone-binding-row span,
-  .phone-binding-row em {
+  .phone-provider-status,
+  .phone-binding-target {
     white-space: normal;
   }
 

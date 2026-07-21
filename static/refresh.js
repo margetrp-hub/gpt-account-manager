@@ -258,6 +258,9 @@ const els = {
   phoneApiKey: document.querySelector("#phoneApiKey"),
   phoneActivationId: document.querySelector("#phoneActivationId"),
   phoneProviderEndpoint: document.querySelector("#phoneProviderEndpoint"),
+  verifyPhoneProvider: document.querySelector("#verifyPhoneProvider"),
+  syncPhoneProviderActivations: document.querySelector("#syncPhoneProviderActivations"),
+  phoneProviderStatus: document.querySelector("#phoneProviderStatus"),
   phoneModeBatch: document.querySelector("#phoneModeBatch"),
   phoneModeOneToOne: document.querySelector("#phoneModeOneToOne"),
   phoneBatchPanel: document.querySelector("#phoneBatchPanel"),
@@ -265,6 +268,7 @@ const els = {
   importPhoneBatch: document.querySelector("#importPhoneBatch"),
   phoneCodeAccount: document.querySelector("#phoneCodeAccount"),
   phoneCodeCurrent: document.querySelector("#phoneCodeCurrent"),
+  phoneBindingTarget: document.querySelector("#phoneBindingTarget"),
   saveManualPhoneCode: document.querySelector("#saveManualPhoneCode"),
   pollSelectedPhone: document.querySelector("#pollSelectedPhone"),
   phoneCodePanel: document.querySelector(".phone-code-panel"),
@@ -2022,6 +2026,7 @@ function renderSelectedPhoneCodePanel() {
   if (!row) {
     els.phoneCodeAccount.textContent = "未选中队列账号";
     els.phoneCodeCurrent.textContent = "手机验证码：-";
+    if (els.phoneBindingTarget) els.phoneBindingTarget.textContent = currentPhoneMode() === "batch" ? "批量池：按队列分配" : "未选中刷新账号";
     return;
   }
   const entry = phoneEntryForRow(row);
@@ -2029,6 +2034,11 @@ function renderSelectedPhoneCodePanel() {
   const phone = entry?.phone || row.phone_number || "未绑定手机";
   els.phoneCodeAccount.textContent = row.email || row.name || "当前账号";
   els.phoneCodeCurrent.textContent = code ? `手机 ${phone} · 验证码：${code}` : `手机 ${phone} · 验证码：-`;
+  if (els.phoneBindingTarget) {
+    els.phoneBindingTarget.textContent = currentPhoneMode() === "batch"
+      ? "批量池：按队列分配"
+      : `绑定到 ${row.email || row.name || "当前账号"}`;
+  }
 }
 
 refreshSourceListHelper = refreshSourceList?.createRefreshSourceListHelper?.({
@@ -3621,6 +3631,12 @@ if (els.pollSelectedPhone) {
 if (els.phoneProvider) {
   els.phoneProvider.addEventListener("change", () => refreshPhonePoolHelper?.syncPhoneProviderForm?.());
 }
+if (els.verifyPhoneProvider) {
+  els.verifyPhoneProvider.addEventListener("click", () => refreshPhonePoolHelper?.verifyPhoneProvider?.());
+}
+if (els.syncPhoneProviderActivations) {
+  els.syncPhoneProviderActivations.addEventListener("click", () => refreshPhonePoolHelper?.syncPhoneProviderActivations?.());
+}
 els.closeManualCodeModal?.addEventListener("click", closeManualCodeDialog);
 els.cancelManualCodeModal?.addEventListener("click", closeManualCodeDialog);
 els.confirmManualCodeModal?.addEventListener("click", submitManualCodeDialog);
@@ -3646,6 +3662,7 @@ els.manualCodeModalInput?.addEventListener("keydown", (event) => {
   input.addEventListener("change", () => {
     saveSettings();
     renderPhonePool();
+    renderSelectedPhoneCodePanel();
   });
 });
 if (els.phonePoolList) {
