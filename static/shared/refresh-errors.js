@@ -19,6 +19,8 @@
       if (/user not found|account not found|no account|账号不存在|账户不存在/.test(text)) return "account_not_found";
       if (/turnstile|security verification|cloudflare|csrf|access denied|risk|风控|安全验证/.test(text)) return "risk_blocked";
       if (/dns|name resolution|name or service not known|getaddrinfo|解析失败/.test(text)) return "dns_failed";
+      if (/interaction_required|consent_required|login_required|authorization_pending|aadsts65001|aadsts50076|aadsts50078/.test(text)) return "outlook_reauth_required";
+      if (/(insufficient_scope|imap\.accessasuser\.all|mail\.read)/.test(text) && /(scope|graph|imap|oauth|token failed|permission|forbidden)/.test(text)) return "outlook_scope_missing";
       if (/graph token failed|graph 授权/.test(text)) return "graph_token_failed";
       if (/imap token failed|imap 授权/.test(text)) return "imap_token_failed";
       if (/graph fetch failed|graph 收信/.test(text)) return "graph_fetch_failed";

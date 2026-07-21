@@ -4,39 +4,16 @@
   const WORKSPACE_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_.-]{5,63}$/;
   const BACKUP_FORMAT = "gpt-account-manager-workspace-backup";
   const BACKUP_VERSION = 1;
-  const BACKUP_GLOBAL_KEYS = new Set([
-    WORKSPACE_ID_STORAGE_KEY,
-    WORKSPACE_HISTORY_KEY,
-    "ctgptm.language",
-    "ctgptm.mail.cpaSettings",
-    "ctgptm.mail.tempSettings",
-    "ctgptm-cpa-warehouse-settings",
-  ]);
-  const BACKUP_LEGACY_KEYS = new Set([
-    "ctgptm.mail.accounts",
-    "ctgptm.mail.categories",
-    "ctgptm.mail.ignoredMessages",
-    "ctgptm.mail.refreshQueue",
-    "ctgptm.mail.abnormalRows",
-    "ctgptm.mail.phonePool",
-  ]);
-  const BACKUP_WORKSPACE_PREFIXES = [
-    "ctgptm.mail.accounts:",
-    "ctgptm.mail.categories:",
-    "ctgptm.mail.messages:",
-    "ctgptm.mail.ignoredMessages:",
-    "ctgptm.mail.refreshQueue:",
-    "ctgptm.mail.abnormalRows:",
-    "ctgptm.mail.mailboxControlsCollapsed.v2:",
-    "ctgptm.mail.refreshSettings:",
-    "ctgptm.mail.phonePool:",
-  ];
-
   const els = {
     currentWorkspace: document.querySelector("#currentWorkspace"),
     workspaceInput: document.querySelector("#workspaceInput"),
     checkWorkspaceBtn: document.querySelector("#checkWorkspaceBtn"),
     adminListBtn: document.querySelector("#adminListBtn"),
+    workspacePassword: document.querySelector("#workspacePassword"),
+    workspacePasswordHint: document.querySelector("#workspacePasswordHint"),
+    saveWorkspacePasswordBtn: document.querySelector("#saveWorkspacePasswordBtn"),
+    recoverPassword: document.querySelector("#recoverPassword"),
+    recoverByPasswordBtn: document.querySelector("#recoverByPasswordBtn"),
     backupPassword: document.querySelector("#backupPassword"),
     exportBackupBtn: document.querySelector("#exportBackupBtn"),
     importBackupFile: document.querySelector("#importBackupFile"),
@@ -45,9 +22,45 @@
   };
 
   const base = window.GAM?.base;
+  const scopedPrefixes = base?.WORKSPACE_SCOPED_PREFIXES || {};
+  const legacyKeys = base?.LEGACY_SHARED_KEYS || {};
+  const BACKUP_GLOBAL_KEYS = new Set([
+    WORKSPACE_ID_STORAGE_KEY,
+    WORKSPACE_HISTORY_KEY,
+    "ctgptm.language",
+    legacyKeys.legacyCpaSettings || "ctgptm.mail.cpaSettings",
+    legacyKeys.legacyTempSettings || "ctgptm.mail.tempSettings",
+    legacyKeys.legacyCpaWarehouseSettings || "ctgptm-cpa-warehouse-settings",
+  ]);
+  const BACKUP_LEGACY_KEYS = new Set([
+    legacyKeys.legacyMailAccounts || "ctgptm.mail.accounts",
+    legacyKeys.legacyMailCategories || "ctgptm.mail.categories",
+    legacyKeys.legacyIgnoredMessages || "ctgptm.mail.ignoredMessages",
+    legacyKeys.legacyRefreshQueue || "ctgptm.mail.refreshQueue",
+    legacyKeys.legacyAbnormalRows || "ctgptm.mail.abnormalRows",
+    legacyKeys.legacyPhonePool || "ctgptm.mail.phonePool",
+  ]);
+  const BACKUP_WORKSPACE_PREFIXES = [
+    scopedPrefixes.accountRecords || "ctgptm.account.records:",
+    scopedPrefixes.accountSettings || "ctgptm.account.settings:",
+    scopedPrefixes.cpaSettings || "ctgptm.mail.cpaSettings:",
+    scopedPrefixes.mailAccounts || "ctgptm.mail.accounts:",
+    scopedPrefixes.mailCategories || "ctgptm.mail.categories:",
+    scopedPrefixes.mailMessages || "ctgptm.mail.messages:",
+    scopedPrefixes.ignoredMessages || "ctgptm.mail.ignoredMessages:",
+    scopedPrefixes.refreshQueue || "ctgptm.mail.refreshQueue:",
+    scopedPrefixes.abnormalRows || "ctgptm.mail.abnormalRows:",
+    scopedPrefixes.mailboxControlsCollapsed || "ctgptm.mail.mailboxControlsCollapsed.v2:",
+    scopedPrefixes.refreshSettings || "ctgptm.mail.refreshSettings:",
+    scopedPrefixes.phonePool || "ctgptm.mail.phonePool:",
+    scopedPrefixes.tempSettings || "ctgptm.mail.tempSettings:",
+    scopedPrefixes.cpaWarehouseSettings || "ctgptm.cpaWarehouse.settings:",
+  ];
+  const lineLabels = window.GAM?.appShell?.LINE_LABELS || {};
+  const workspaceIdFromBase = base?.resolveWorkspaceId?.(WORKSPACE_ID_STORAGE_KEY) || "";
 
   function currentWorkspaceId() {
-    return localStorage.getItem(WORKSPACE_ID_STORAGE_KEY) || "";
+    return workspaceIdFromBase || localStorage.getItem(WORKSPACE_ID_STORAGE_KEY) || "";
   }
 
   function setStatus(message, tone = "") {
@@ -77,8 +90,11 @@
   }
 
   function apiHeaders() {
-    const token = localStorage.getItem("ctgptm.admin.toolToken") || "";
-    return token ? { Authorization: `Bearer ${token}` } : {};
+    const token = base?.rememberedAdminToken?.() || localStorage.getItem("ctgptm.admin.toolToken") || "";
+    return {
+      "Content-Type": "application/json",
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    };
   }
 
   async function readJson(response, label) {
@@ -309,10 +325,15 @@
 
       const title = document.createElement("div");
       title.className = "recover-workspace-title";
-      title.innerHTML = `<strong>${row.workspace_id}</strong><span>${row.exists ? "服务器有数据" : "服务器未找到数据"}</span>`;
+      const passwordText = row.password_enabled ? "已设置密码" : "未设置密码";
+      title.innerHTML = `<strong>${row.workspace_id}</strong><span>${row.exists ? "服务器有数据" : "服务器未找到数据"} · ${passwordText}</span>`;
 
       const meta = document.createElement("p");
-      meta.textContent = `${countsText(row)} · 最近活动 ${formatTime(row.latest_activity)}`;
+      meta.textContent = [
+        countsText(row),
+        `最近活动 ${formatTime(row.latest_activity)}`,
+        row.password_hint ? `提示：${row.password_hint}` : "",
+      ].filter(Boolean).join(" · ");
 
       const actions = document.createElement("div");
       actions.className = "recover-workspace-actions";
@@ -329,7 +350,7 @@
 
       const mailboxButton = document.createElement("button");
       mailboxButton.type = "button";
-      mailboxButton.textContent = "打开邮箱管理";
+      mailboxButton.textContent = `打开${lineLabels.mailboxes || "邮箱管理"}`;
       mailboxButton.addEventListener("click", () => {
         rememberWorkspace(row.workspace_id, "恢复切换");
         openWithWorkspace("/mailboxes.html", row.workspace_id);
@@ -337,7 +358,7 @@
 
       const refreshButton = document.createElement("button");
       refreshButton.type = "button";
-      refreshButton.textContent = "打开凭证刷新";
+      refreshButton.textContent = `打开${lineLabels.refresh || "凭证刷新"}`;
       refreshButton.addEventListener("click", () => {
         rememberWorkspace(row.workspace_id, "恢复切换");
         openWithWorkspace("/refresh.html", row.workspace_id);
@@ -362,6 +383,63 @@
     const payload = await readJson(response, "工作区检查");
     renderRows(payload.workspaces || []);
     setStatus(`已检查 ${ids.length} 个工作区。`);
+  }
+
+  async function saveWorkspacePassword() {
+    const workspaceId = currentWorkspaceId();
+    const password = els.workspacePassword.value.trim();
+    const hint = els.workspacePasswordHint.value.trim();
+    if (!WORKSPACE_ID_PATTERN.test(workspaceId)) {
+      setStatus("当前浏览器没有有效工作区，不能设置恢复密码。", "error");
+      return;
+    }
+    if (password.length < 6) {
+      setStatus("工作区密码至少 6 位。", "error");
+      return;
+    }
+    els.saveWorkspacePasswordBtn.disabled = true;
+    try {
+      const response = await fetch("/client-api/workspaces/recovery-password", {
+        method: "POST",
+        headers: {
+          ...apiHeaders(),
+          "X-Workspace-Id": workspaceId,
+        },
+        body: JSON.stringify({ password, hint }),
+      });
+      const data = await readJson(response, "设置工作区密码");
+      els.workspacePassword.value = "";
+      setStatus("工作区恢复密码已保存。以后可用这个密码找回当前工作区。");
+      renderRows(data.workspace ? [data.workspace] : []);
+    } catch (error) {
+      setStatus(error.message || "设置工作区密码失败。", "error");
+    } finally {
+      els.saveWorkspacePasswordBtn.disabled = false;
+    }
+  }
+
+  async function recoverByPassword() {
+    const password = els.recoverPassword.value.trim();
+    if (password.length < 6) {
+      setStatus("请输入之前设置的工作区密码。", "error");
+      return;
+    }
+    els.recoverByPasswordBtn.disabled = true;
+    try {
+      const response = await fetch("/client-api/workspaces/recover-by-password", {
+        method: "POST",
+        headers: apiHeaders(),
+        body: JSON.stringify({ password }),
+      });
+      const data = await readJson(response, "找回工作区");
+      const rows = data.workspaces || [];
+      renderRows(rows);
+      setStatus(rows.length ? `找到 ${rows.length} 个匹配工作区。` : "没有找到匹配的工作区，请确认密码是否正确。", rows.length ? "" : "warn");
+    } catch (error) {
+      setStatus(error.message || "找回工作区失败。", "error");
+    } finally {
+      els.recoverByPasswordBtn.disabled = false;
+    }
   }
 
   async function listServerWorkspaces() {
@@ -403,6 +481,9 @@
         setStatus(`${error.message || "管理员列表读取失败"}。如果还没登录管理员，请先打开 /login.html 登录。`, "error");
       }
     });
+
+    els.saveWorkspacePasswordBtn.addEventListener("click", saveWorkspacePassword);
+    els.recoverByPasswordBtn.addEventListener("click", recoverByPassword);
 
     els.exportBackupBtn.addEventListener("click", async () => {
       try {

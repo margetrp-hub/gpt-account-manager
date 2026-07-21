@@ -1,0 +1,122 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>GPT账号管理助手 - API 文档</title>
+  <link rel="stylesheet" href="/styles.css?v={{APP_VERSION}}">
+  <link rel="stylesheet" href="/forge-theme.css?v={{APP_VERSION}}">
+  <script src="/shared/app-shell.js?v={{APP_VERSION}}" defer></script>
+  <script src="/shared/base.js?v={{APP_VERSION}}" defer></script>
+  <script src="/nav-links.js?v={{APP_VERSION}}" defer></script>
+  <script src="/i18n.js?v={{APP_VERSION}}" defer></script>
+  <script src="/api.js?v={{APP_VERSION}}" defer></script>
+</head>
+<body data-app-section="plugin" data-app-current="api">
+  <div class="shell plugin-shell">
+    <header class="topbar app-header">
+      <a class="brand" href="/" aria-label="GPT账号管理助手">
+        <span class="brand-mark" aria-hidden="true">
+          <svg viewBox="0 0 24 24" width="23" height="23">
+            <path d="M12 3 3.5 7.4 12 12l8.5-4.6L12 3Z"></path>
+            <path d="m4 12 8 4.3 8-4.3"></path>
+            <path d="m4 16.5 8 4.3 8-4.3"></path>
+          </svg>
+        </span>
+        <span class="brand-copy">
+          <strong>GPT账号管理助手</strong>
+          <em>API 文档 / 工作区隔离 / 验证码读取</em>
+        </span>
+      </a>
+      <nav class="topnav" aria-label="顶部导航">
+        <a class="github-link" href="https://github.com/margetrp-hub/gpt-account-manager" target="_blank" rel="noreferrer">GitHub</a>
+      </nav>
+    </header>
+
+    <nav class="module-tabs" aria-label="功能导航" data-app-nav></nav>
+    <nav class="plugin-tabs" aria-label="插件导航" data-plugin-nav></nav>
+
+    <main class="plugin-layout">
+      <section class="panel plugin-hero">
+        <div>
+          <p class="eyebrow">API Docs</p>
+          <h1>标准 API 文档</h1>
+          <p>覆盖工作区、邮件缓存、验证码读取、订阅核验和管理员接口边界。适合脚本、面板和独立插件对接。</p>
+        </div>
+        <div class="plugin-hero-note">
+          <strong>说明</strong>
+          <span>完整说明同时保存在仓库 `docs/API.md`，这里提供浏览器可直接查看的摘要版。</span>
+        </div>
+      </section>
+
+      <section class="panel api-grid">
+        <div class="section-head">
+          <h2>工作区与认证</h2>
+        </div>
+        <div class="health-kv">
+          <div class="health-item"><span>普通客户端</span><strong>`X-Workspace-Id` 指定工作区</strong></div>
+          <div class="health-item"><span>强制切换</span><strong>`?force_workspace=ws_xxx`</strong></div>
+          <div class="health-item"><span>管理员面</span><strong>`/admin-api/*` 与 `/api/*` 需要管理员认证</strong></div>
+        </div>
+      </section>
+
+      <section class="panel api-grid">
+        <div class="section-head">
+          <h2>验证码接口</h2>
+        </div>
+        <pre class="api-code-block" data-i18n-skip><code id="apiMailCodeRoutes">GET /client-api/mail-code?email=user@example.com&amp;live=1&amp;provider=auto
+POST /client-api/mail-code
+GET /api/mail-code?email=user@example.com&amp;live=1</code></pre>
+        <p>返回当前工作区指定邮箱的最新验证码；`live=1` 时会先触发一次取信，再从缓存中提取最新 6 位验证码。</p>
+      </section>
+
+      <section class="panel api-grid">
+        <div class="section-head">
+          <h2>核心接口</h2>
+        </div>
+        <div class="health-kv">
+          <div class="health-item"><span>邮件缓存</span><strong>`GET /client-api/messages`</strong></div>
+          <div class="health-item"><span>删除缓存邮件</span><strong>`POST /client-api/messages/delete`</strong></div>
+          <div class="health-item"><span>后台取信任务</span><strong>`POST /client-api/fetch-start` / `GET /client-api/fetch-status`</strong></div>
+          <div class="health-item"><span>订阅核验</span><strong>`POST /client-api/accounts/check-subscription`</strong></div>
+          <div class="health-item"><span>工作区找回</span><strong>`GET/POST /client-api/workspaces/*`</strong></div>
+          <div class="health-item"><span>管理员 JWT 提取</span><strong>`POST /admin-api/extract-jwts`</strong></div>
+        </div>
+      </section>
+
+      <section class="panel api-grid">
+        <div class="section-head">
+          <h2>调用示例</h2>
+        </div>
+        <div class="plugin-grid">
+          <article class="plugin-card api-example-card">
+            <span>⌘</span>
+            <strong>curl · GET</strong>
+            <pre class="api-code-block" data-i18n-skip><code id="apiCurlGet"></code></pre>
+            <div class="api-code-actions">
+              <button id="copyApiCurlGet" class="primary" type="button">复制</button>
+            </div>
+          </article>
+          <article class="plugin-card api-example-card">
+            <span>⌘</span>
+            <strong>curl · POST</strong>
+            <pre class="api-code-block" data-i18n-skip><code id="apiCurlPost"></code></pre>
+            <div class="api-code-actions">
+              <button id="copyApiCurlPost" class="primary" type="button">复制</button>
+            </div>
+          </article>
+          <article class="plugin-card api-example-card">
+            <span>⌁</span>
+            <strong>JavaScript</strong>
+            <pre class="api-code-block" data-i18n-skip><code id="apiJsExample"></code></pre>
+            <div class="api-code-actions">
+              <button id="copyApiJs" class="primary" type="button">复制</button>
+            </div>
+          </article>
+        </div>
+      </section>
+    </main>
+  </div>
+  <div id="toast" class="toast" role="status" aria-live="polite"></div>
+</body>
+</html>

@@ -86,6 +86,7 @@ from storage.workspace import (
     workspace_file as storage_workspace_file,
     write_json_file as storage_write_json_file,
 )
+from storage.file_lock import locked_path as storage_locked_path
 from dashboard_stats import (
     dashboard_message_recipient as build_dashboard_message_recipient,
     dashboard_stats_response as build_dashboard_stats_response,
@@ -471,6 +472,9 @@ WORKSPACE_RECOVERY_FILES = (
     "refresh_results.json",
     "login_history.json",
 )
+WORKSPACE_RECOVERY_SECRET_FILE = "recovery_secret.json"
+WORKSPACE_RECOVERY_PASSWORD_MIN_LENGTH = 6
+WORKSPACE_RECOVERY_PASSWORD_ITERATIONS = 210_000
 
 
 def workspace_latest_activity(workspace_id: str) -> str:
@@ -483,6 +487,99 @@ def workspace_latest_activity(workspace_id: str) -> str:
     if latest_ts <= 0:
         return ""
     return datetime.fromtimestamp(latest_ts, timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+def workspace_recovery_secret_path(workspace_id: str) -> Path:
+    return workspace_file(workspace_id, WORKSPACE_RECOVERY_SECRET_FILE)
+
+
+def workspace_recovery_secret_state(workspace_id: str) -> dict[str, Any]:
+    data = load_json_file(workspace_recovery_secret_path(workspace_id), {})
+    return data if isinstance(data, dict) else {}
+
+
+def workspace_recovery_secret_enabled(workspace_id: str) -> bool:
+    data = workspace_recovery_secret_state(workspace_id)
+    return bool(data.get("salt") and data.get("password_hash"))
+
+
+def workspace_recovery_password_hash(password: str, salt: bytes) -> str:
+    digest = hashlib.pbkdf2_hmac(
+        "sha256",
+        password.encode("utf-8"),
+        salt,
+        WORKSPACE_RECOVERY_PASSWORD_ITERATIONS,
+    )
+    return base64.urlsafe_b64encode(digest).decode("ascii")
+
+
+def set_workspace_recovery_password(payload: dict[str, Any], workspace_id: str) -> dict[str, Any]:
+    workspace = normalize_workspace_id(workspace_id)
+    password = coerce_text(payload.get("password") or payload.get("workspace_password")).strip()
+    if len(password) < WORKSPACE_RECOVERY_PASSWORD_MIN_LENGTH:
+        raise ValueError(f"工作区密码至少 {WORKSPACE_RECOVERY_PASSWORD_MIN_LENGTH} 位")
+    hint = coerce_text(payload.get("hint") or payload.get("password_hint")).strip()[:80]
+    salt = secrets.token_bytes(16)
+    record = {
+        "version": 1,
+        "kdf": "PBKDF2-SHA256",
+        "iterations": WORKSPACE_RECOVERY_PASSWORD_ITERATIONS,
+        "salt": base64.urlsafe_b64encode(salt).decode("ascii"),
+        "password_hash": workspace_recovery_password_hash(password, salt),
+        "hint": hint,
+        "updated_at": iso_now(),
+    }
+    write_json_file(workspace_recovery_secret_path(workspace), record)
+    row = workspace_recovery_row(workspace) or {"workspace_id": workspace, "exists": True}
+    row["password_enabled"] = True
+    row["password_hint"] = hint
+    return {
+        "ok": True,
+        "success": True,
+        "version": APP_VERSION,
+        "workspace": row,
+    }
+
+
+def workspace_recovery_password_matches(record: dict[str, Any], password: str) -> bool:
+    try:
+        salt = base64.urlsafe_b64decode(str(record.get("salt") or "").encode("ascii"))
+    except Exception:
+        return False
+    expected = str(record.get("password_hash") or "")
+    actual = workspace_recovery_password_hash(password, salt)
+    return bool(expected) and hmac.compare_digest(expected, actual)
+
+
+def recover_workspace_by_password(payload: dict[str, Any]) -> dict[str, Any]:
+    password = coerce_text(payload.get("password") or payload.get("workspace_password")).strip()
+    if len(password) < WORKSPACE_RECOVERY_PASSWORD_MIN_LENGTH:
+        raise ValueError("请输入工作区密码")
+    rows: list[dict[str, Any]] = []
+    if WORKSPACES_DIR.exists():
+        for item in WORKSPACES_DIR.iterdir():
+            if not item.is_dir():
+                continue
+            try:
+                workspace = parse_workspace_id(item.name)
+            except ValueError:
+                continue
+            if not workspace:
+                continue
+            record = workspace_recovery_secret_state(workspace)
+            if record and workspace_recovery_password_matches(record, password):
+                row = workspace_recovery_row(workspace)
+                if row:
+                    row["password_enabled"] = True
+                    row["password_hint"] = coerce_text(record.get("hint")).strip()[:80]
+                    rows.append(row)
+    rows.sort(key=lambda item: (item.get("latest_activity") or "", item.get("total_items") or 0), reverse=True)
+    return {
+        "ok": True,
+        "success": True,
+        "version": APP_VERSION,
+        "workspaces": rows,
+    }
 
 
 def workspace_recovery_row(workspace_id: str) -> dict[str, Any] | None:
@@ -519,6 +616,8 @@ def workspace_recovery_row(workspace_id: str) -> dict[str, Any] | None:
         "counts": safe_counts,
         "total_items": total_items,
         "latest_activity": workspace_latest_activity(normalized),
+        "password_enabled": workspace_recovery_secret_enabled(normalized),
+        "password_hint": coerce_text(workspace_recovery_secret_state(normalized).get("hint")).strip()[:80],
     }
 
 
@@ -834,6 +933,54 @@ def search_workspace_messages_response(
         "messages": response.get("messages", []),
         "count": len(response.get("messages", [])),
         "types": response.get("types", MAIL_TYPE_LABELS),
+    }
+
+
+def workspace_mail_code_response(
+    workspace_id: str,
+    payload: dict[str, Any],
+) -> dict[str, Any]:
+    email_addr = first_text(payload.get("email"), payload.get("account"))
+    if "@" not in email_addr:
+        raise RuntimeError("缺少有效邮箱地址")
+    live = bool(payload.get("live") or payload.get("refresh") or payload.get("fetch_live"))
+    limit = max(1, min(int(payload.get("limit") or 20), 50))
+    if live:
+        fetch_saved_workspace_mail({
+            "source": first_text(payload.get("source"), "all"),
+            "provider": first_text(payload.get("provider"), "auto"),
+            "emails": [email_addr],
+            "sender_filter": first_text(payload.get("sender"), payload.get("sender_filter")),
+            "limit": limit,
+        }, workspace_id)
+    messages = MESSAGE_QUERY_SERVICE.workspace_messages(workspace_id, {
+        "query": first_text(payload.get("query")),
+        "sender": first_text(payload.get("sender"), payload.get("sender_filter")),
+        "source": first_text(payload.get("source"), "all"),
+        "mail_type": "verification",
+        "category": first_text(payload.get("category"), "all"),
+        "account": email_addr,
+        "accounts": [email_addr],
+    })
+    codes: list[str] = []
+    seen_codes: set[str] = set()
+    for message in messages:
+        for code in message_six_digit_codes(message):
+            if code not in seen_codes:
+                seen_codes.add(code)
+                codes.append(code)
+    latest_message = messages[0] if messages else {}
+    latest_code = find_latest_code(messages)
+    return {
+        "success": True,
+        "workspace_id": normalize_workspace_id(workspace_id),
+        "email": email_addr,
+        "found": bool(latest_code),
+        "code": latest_code,
+        "codes": codes[:10],
+        "message_count": len(messages),
+        "latest_message": normalize_message_for_code_api(latest_message) if latest_message else {},
+        "source_mode": "live" if live else "cache",
     }
 
 
@@ -1356,29 +1503,153 @@ def phone_api_url(template: str, *, phone: str, account_email: str, since: str =
     return raw
 
 
-def poll_phone_code(payload: dict[str, Any]) -> dict[str, Any]:
-    phone = coerce_text(payload.get("phone") or payload.get("phone_number") or payload.get("phoneNumber"))
-    account_email = coerce_text(payload.get("account_email") or payload.get("email") or payload.get("account"))
-    api_url = coerce_text(payload.get("api_url") or payload.get("apiUrl"))
-    since = coerce_text(payload.get("since"))
-    if not phone:
-        raise RuntimeError("手机号不能为空")
-    url = phone_api_url(api_url, phone=phone, account_email=account_email, since=since)
-    status, text = http_text(url, timeout=30)
+PHONE_PROVIDER_ENDPOINTS = {
+    "herosms": "https://hero-sms.com/stubs/handler_api.php",
+    "smsbower": "https://smsbower.page/stubs/handler_api.php",
+}
+
+
+class PhoneProviderError(RuntimeError):
+    def __init__(self, message: str, error_code: str = "phone_provider_request_failed") -> None:
+        super().__init__(message)
+        self.error_code = error_code
+
+
+def normalize_phone_provider(value: Any) -> str:
+    provider = re.sub(r"[^a-z0-9]+", "", coerce_text(value).lower())
+    aliases = {
+        "": "custom",
+        "custom": "custom",
+        "api": "custom",
+        "url": "custom",
+        "herosms": "herosms",
+        "hero": "herosms",
+        "smsbower": "smsbower",
+        "bower": "smsbower",
+    }
+    if provider not in aliases:
+        raise PhoneProviderError("不支持的接码平台", "phone_provider_unsupported")
+    return aliases[provider]
+
+
+def phone_provider_url(provider: str, *, endpoint: str, api_key: str, activation_id: str) -> str:
+    base_url = coerce_text(endpoint) or PHONE_PROVIDER_ENDPOINTS[provider]
+    parsed = urllib.parse.urlsplit(base_url)
+    if parsed.scheme not in {"http", "https"} or not parsed.hostname:
+        raise PhoneProviderError("接码平台地址必须是 http/https 地址", "phone_provider_endpoint_invalid")
+    validate_remote_base_url(base_url)
+    query = urllib.parse.parse_qsl(parsed.query, keep_blank_values=True)
+    query.extend([
+        ("api_key", api_key),
+        ("action", "getStatusV2" if provider == "herosms" else "getStatus"),
+        ("id", activation_id),
+    ])
+    return urllib.parse.urlunsplit((
+        parsed.scheme,
+        parsed.netloc,
+        parsed.path,
+        urllib.parse.urlencode(query),
+        parsed.fragment,
+    ))
+
+
+def phone_provider_failure(raw: str) -> PhoneProviderError | None:
+    status = coerce_text(raw).upper()
+    if not status:
+        return PhoneProviderError("接码平台没有返回结果", "phone_provider_response_invalid")
+    if re.search(r"BAD[_ ]?KEY|INVALID[_ ]?(?:API[_ ]?)?KEY|KEY[_ ]?INVALID", status):
+        return PhoneProviderError("接码平台密钥无效", "phone_provider_key_invalid")
+    if re.search(r"NO[_ ]?BALANCE|INSUFFICIENT[_ ]?BALANCE", status):
+        return PhoneProviderError("接码平台余额不足", "phone_provider_no_balance")
+    if re.search(r"NO[_ ]?ACTIVATION|ACTIVATION[_ ]?(?:NOT[_ ]?FOUND|CANCEL)|STATUS_CANCEL", status):
+        return PhoneProviderError("接码订单不存在或已失效", "phone_activation_missing")
+    if re.search(r"(?:ACCESS|ERROR|FAILED|DENIED|FORBIDDEN)", status) and not re.search(r"WAIT|PENDING|STATUS_OK", status):
+        return PhoneProviderError("接码平台返回异常", "phone_provider_response_invalid")
+    return None
+
+
+def poll_standard_phone_provider(
+    provider: str,
+    *,
+    endpoint: str,
+    api_key: str,
+    activation_id: str,
+) -> dict[str, Any]:
+    if not api_key:
+        raise PhoneProviderError("缺少接码平台密钥", "phone_provider_key_missing")
+    if not activation_id:
+        raise PhoneProviderError("缺少接码订单 ID", "phone_activation_missing")
+    url = phone_provider_url(provider, endpoint=endpoint, api_key=api_key, activation_id=activation_id)
+    try:
+        http_status, text = http_text(url, timeout=30)
+    except Exception as exc:
+        raise PhoneProviderError("接码平台请求失败", "phone_provider_request_failed") from exc
+    failure = phone_provider_failure(text)
+    if failure:
+        raise failure
     try:
         raw_payload: Any = json.loads(text)
     except Exception:
         raw_payload = text
     extracted = extract_sms_code_payload(raw_payload)
     code = extracted.get("code", "")
+    status_text = coerce_text(text)
+    pending = bool(re.search(r"WAIT|PENDING|NO[_ ]?(?:SMS|CODE)|STATUS_WAIT", status_text, re.I))
+    if not code and not pending and not isinstance(raw_payload, (dict, list)):
+        raise PhoneProviderError("接码平台响应格式无法识别", "phone_provider_response_invalid")
     return {
-        "success": True,
         "found": bool(code),
         "code": code,
+        "message": extracted.get("message", "")[:500] if code else "等待验证码",
+        "status": "found" if code else "pending",
+        "http_status": http_status,
+    }
+
+
+def poll_phone_code(payload: dict[str, Any]) -> dict[str, Any]:
+    phone = coerce_text(payload.get("phone") or payload.get("phone_number") or payload.get("phoneNumber"))
+    account_email = coerce_text(payload.get("account_email") or payload.get("email") or payload.get("account"))
+    api_url = coerce_text(payload.get("api_url") or payload.get("apiUrl"))
+    provider = normalize_phone_provider(payload.get("provider") or payload.get("phone_provider"))
+    api_key = coerce_text(payload.get("api_key") or payload.get("apiKey") or payload.get("phone_api_key"))
+    activation_id = coerce_text(payload.get("activation_id") or payload.get("activationId") or payload.get("phone_activation_id"))
+    endpoint = coerce_text(payload.get("endpoint") or payload.get("provider_endpoint") or payload.get("phone_provider_endpoint"))
+    since = coerce_text(payload.get("since"))
+    if not phone:
+        raise RuntimeError("手机号不能为空")
+    if provider == "custom":
+        url = phone_api_url(api_url, phone=phone, account_email=account_email, since=since)
+        status, text = http_text(url, timeout=30)
+        try:
+            raw_payload: Any = json.loads(text)
+        except Exception:
+            raw_payload = text
+        extracted = extract_sms_code_payload(raw_payload)
+        code = extracted.get("code", "")
+        result = {
+            "found": bool(code),
+            "code": code,
+            "message": extracted.get("message", "")[:500] or ("等待验证码" if not code else "已收到验证码"),
+            "status": "found" if code else "pending",
+            "http_status": status,
+        }
+    else:
+        result = poll_standard_phone_provider(
+            provider,
+            endpoint=endpoint,
+            api_key=api_key,
+            activation_id=activation_id,
+        )
+    return {
+        "success": True,
+        "found": result["found"],
+        "code": result["code"],
         "phone": phone,
         "account_email": account_email,
-        "message": extracted.get("message", "")[:500],
-        "status": status,
+        "provider": provider,
+        "message": result["message"],
+        "status": result["status"],
+        "http_status": result["http_status"],
         "checked_at": iso_now(),
     }
 
@@ -1446,14 +1717,26 @@ def phone_pool_entries_from_payload(payload: dict[str, Any]) -> list[dict[str, s
             continue
         phone = coerce_text(item.get("phone") or item.get("phone_number") or item.get("phoneNumber"))
         api_url = coerce_text(item.get("api_url") or item.get("apiUrl") or item.get("phone_api_url") or item.get("phoneApiUrl"))
-        if not phone or not api_url:
+        try:
+            provider = normalize_phone_provider(item.get("provider") or item.get("phone_provider"))
+        except PhoneProviderError:
+            continue
+        api_key = coerce_text(item.get("api_key") or item.get("apiKey") or item.get("phone_api_key"))
+        activation_id = coerce_text(item.get("activation_id") or item.get("activationId") or item.get("phone_activation_id"))
+        endpoint = coerce_text(item.get("endpoint") or item.get("provider_endpoint") or item.get("phone_provider_endpoint"))
+        valid_source = bool(api_url) if provider == "custom" else bool(api_key and activation_id)
+        if not phone or not valid_source:
             continue
         entries.append({
             "id": coerce_text(item.get("id")),
             "mode": coerce_text(item.get("mode")),
             "phone": phone,
             "phone_digits": normalize_phone_digits(phone),
+            "provider": provider,
             "api_url": api_url,
+            "api_key": api_key,
+            "activation_id": activation_id,
+            "endpoint": endpoint,
             "account_email": coerce_text(item.get("account_email") or item.get("accountEmail")).lower(),
         })
     return entries
@@ -1900,13 +2183,25 @@ def get_imap_token(account: MailAccount) -> tuple[str, str]:
             "client_id": account.client_id,
             "grant_type": "refresh_token",
             "refresh_token": account.refresh_token,
-            "scope": "offline_access https://graph.microsoft.com/Mail.Read https://graph.microsoft.com/User.Read",
+            "scope": "offline_access https://graph.microsoft.com/IMAP.AccessAsUser.All",
         }, "outlook.live.com"),
         ("https://login.microsoftonline.com/common/oauth2/v2.0/token", {
             "client_id": account.client_id,
             "grant_type": "refresh_token",
             "refresh_token": account.refresh_token,
-            "scope": "offline_access https://graph.microsoft.com/Mail.Read https://graph.microsoft.com/User.Read",
+            "scope": "offline_access https://graph.microsoft.com/IMAP.AccessAsUser.All",
+        }, "outlook.office365.com"),
+        ("https://login.microsoftonline.com/consumers/oauth2/v2.0/token", {
+            "client_id": account.client_id,
+            "grant_type": "refresh_token",
+            "refresh_token": account.refresh_token,
+            "scope": "offline_access https://outlook.office.com/IMAP.AccessAsUser.All",
+        }, "outlook.live.com"),
+        ("https://login.microsoftonline.com/common/oauth2/v2.0/token", {
+            "client_id": account.client_id,
+            "grant_type": "refresh_token",
+            "refresh_token": account.refresh_token,
+            "scope": "offline_access https://outlook.office.com/IMAP.AccessAsUser.All",
         }, "outlook.office365.com"),
     ]
     last_error = ""
@@ -2922,6 +3217,43 @@ def microsoft_provider_sequence(provider: str) -> list[str]:
     return provider_microsoft_provider_sequence(provider)
 
 
+def pick_microsoft_fetch_error_detail(errors: list[str]) -> dict[str, Any]:
+    if not errors:
+        return {}
+    details = [classify_mail_fetch_error(item, "microsoft") for item in errors if coerce_text(item)]
+    if not details:
+        return {}
+    priority = {
+        "outlook_credential_format": 90,
+        "outlook_client_mismatch": 85,
+        "outlook_reauth_required": 80,
+        "outlook_scope_missing": 75,
+        "outlook_refresh_expired": 70,
+        "graph_token_failed": 60,
+        "imap_token_failed": 60,
+        "graph_fetch_failed": 50,
+        "imap_fetch_failed": 50,
+        "network_tls_eof": 40,
+        "network_failed": 35,
+        "dns_failed": 30,
+        "mail_fetch_timeout": 25,
+        "mail_fetch_failed": 10,
+    }
+    best = max(details, key=lambda item: priority.get(coerce_text(item.get("error_code")), 0))
+    if len(errors) > 1:
+        attempted = " / ".join([
+            "IMAP" if err.startswith("imap:") else
+            "Graph" if err.startswith("graph:") else
+            "Outlook API" if err.startswith("outlook:") else
+            "Microsoft"
+            for err in errors
+        ])
+        hint = coerce_text(best.get("error_hint"))
+        best = dict(best)
+        best["error_hint"] = f"已尝试 {attempted}。{hint}" if hint else f"已尝试 {attempted}。"
+    return best
+
+
 def fetch_for_account(account: MailAccount, provider: str, limit: int, sender_filter: str) -> dict[str, Any]:
     started = time.perf_counter()
     errors: list[str] = []
@@ -2948,7 +3280,7 @@ def fetch_for_account(account: MailAccount, provider: str, limit: int, sender_fi
             account.last_status = "error"
             account.last_error = str(exc)[:500]
     account.last_check_at = checked_at
-    detail = classify_mail_fetch_error(errors[0] if errors else "", "microsoft") if account.last_status != "ok" else {}
+    detail = pick_microsoft_fetch_error_detail(errors) if account.last_status != "ok" else {}
     result = {
         "source": "microsoft",
         "provider": used_provider or provider,
@@ -3106,6 +3438,11 @@ WORKSPACE_STATE = WorkspaceState(
     row_fallback_key=json_row_fallback_key,
 )
 
+def workspace_lock(workspace_id: str):
+    # 按 workspace 目录加锁，把 service 层跨多个文件的"读-改-写"整段串行化。
+    return storage_locked_path(workspace_dir(workspace_id))
+
+
 MAILBOX_WORKSPACE_SERVICE = MailboxWorkspaceService(
     coerce_text=coerce_text,
     usable_secret=usable_secret,
@@ -3126,6 +3463,7 @@ MAILBOX_WORKSPACE_SERVICE = MailboxWorkspaceService(
         email=coerce_text(item.get("address") or item.get("email")).lower(),
         jwt=coerce_text(item.get("jwt")),
     ),
+    workspace_lock=workspace_lock,
 )
 
 def parse_nested_json_value(value: Any, depth: int = 4) -> Any:
@@ -4817,13 +5155,22 @@ class ChatGPTProtocolLogin:
             return bound[0]
         phone = coerce_text(self.payload.get("phone_number") or self.payload.get("phoneNumber"))
         api_url = coerce_text(self.payload.get("phone_api_url") or self.payload.get("phoneApiUrl"))
-        if phone and api_url:
+        provider = normalize_phone_provider(self.payload.get("phone_provider"))
+        api_key = coerce_text(self.payload.get("phone_api_key"))
+        activation_id = coerce_text(self.payload.get("phone_activation_id"))
+        endpoint = coerce_text(self.payload.get("phone_provider_endpoint"))
+        valid_source = bool(api_url) if provider == "custom" else bool(api_key and activation_id)
+        if phone and valid_source:
             return {
                 "id": coerce_text(self.payload.get("phone_binding_id") or self.payload.get("phoneBindingId")),
                 "mode": "payload",
                 "phone": phone,
                 "phone_digits": normalize_phone_digits(phone),
+                "provider": provider,
                 "api_url": api_url,
+                "api_key": api_key,
+                "activation_id": activation_id,
+                "endpoint": endpoint,
                 "account_email": account_email,
             }
         if allow_batch:
@@ -4844,6 +5191,10 @@ class ChatGPTProtocolLogin:
             )
         self.payload["phone_number"] = phone
         self.payload["phone_api_url"] = coerce_text(source.get("api_url"))
+        self.payload["phone_provider"] = coerce_text(source.get("provider"))
+        self.payload["phone_api_key"] = coerce_text(source.get("api_key"))
+        self.payload["phone_activation_id"] = coerce_text(source.get("activation_id"))
+        self.payload["phone_provider_endpoint"] = coerce_text(source.get("endpoint"))
         self.log("phone_pool", "提交绑定手机号", "info")
         referer = continue_url or "https://auth.openai.com/add-phone"
         form_url = self.normalize_auth_url(referer)
@@ -4956,10 +5307,13 @@ class ChatGPTProtocolLogin:
     def fetch_phone_verification_code(self, phone_hint: str = "", attempts: int = 24, delay: float = 5) -> str:
         source = self.resolve_phone_code_source(phone_hint, allow_batch=False)
         phone = coerce_text(source.get("phone"))
-        api_url = coerce_text(source.get("api_url"))
-        if phone and api_url:
+        if phone and source:
             self.payload["phone_number"] = phone
-            self.payload["phone_api_url"] = api_url
+            self.payload["phone_api_url"] = coerce_text(source.get("api_url"))
+            self.payload["phone_provider"] = coerce_text(source.get("provider"))
+            self.payload["phone_api_key"] = coerce_text(source.get("api_key"))
+            self.payload["phone_activation_id"] = coerce_text(source.get("activation_id"))
+            self.payload["phone_provider_endpoint"] = coerce_text(source.get("endpoint"))
             self.log("phone_pool", f"按手机号匹配长效手机尾号 {normalize_phone_digits(phone)[-4:]}", "info")
         since = str(int(time.time()))
         for attempt in range(1, max(1, attempts) + 1):
@@ -4968,14 +5322,9 @@ class ChatGPTProtocolLogin:
             if manual_code:
                 self.log("manual_phone_code", "使用手动填写的手机验证码", "info")
                 return manual_code
-            if phone and api_url:
+            if phone and source:
                 try:
-                    result = poll_phone_code({
-                        "phone": phone,
-                        "api_url": api_url,
-                        "account_email": self.payload.get("email", ""),
-                        "since": since,
-                    })
+                    result = poll_phone_code({**source, "account_email": self.payload.get("email", ""), "since": since})
                     if result.get("code"):
                         self.log("phone_code", "已从长效手机 API 收到验证码", "success")
                         return coerce_text(result.get("code"))
@@ -5592,6 +5941,10 @@ def http_handlers() -> HttpHandlers:
             public_stats_payload=public_stats_payload,
             workspace_recovery_payload=workspace_recovery_payload,
             workspace_recovery_list_payload=workspace_recovery_list_payload,
+            set_workspace_recovery_password=set_workspace_recovery_password,
+            recover_workspace_by_password=recover_workspace_by_password,
+            check_account_subscriptions=check_account_subscriptions,
+            workspace_mail_code_response=workspace_mail_code_response,
             upgrade_status_payload=upgrade_status_payload,
             get_client_mail_fetch_job=get_client_mail_fetch_job,
             send_workspace_messages_json=send_workspace_messages_json,
@@ -5743,7 +6096,7 @@ def usage_limit_message(fields: dict[str, Any]) -> str:
     return "；".join(parts)
 
 
-def refresh_openai_with_rt(refresh_token: str) -> tuple[int, dict[str, Any], str]:
+def refresh_openai_with_rt(refresh_token: str, proxy_url: str = "") -> tuple[int, dict[str, Any], str]:
     return http_request_form_json(
         OPENAI_OAUTH_TOKEN_URL,
         form_data={
@@ -5754,7 +6107,213 @@ def refresh_openai_with_rt(refresh_token: str) -> tuple[int, dict[str, Any], str
         },
         headers={"Accept": "application/json"},
         timeout=45,
+        proxy_url=proxy_url,
     )
+
+
+def account_check_status_from_payload(data: dict[str, Any]) -> dict[str, Any]:
+    accounts = data.get("accounts") if isinstance(data, dict) else {}
+    account_items: list[dict[str, Any]] = []
+    if isinstance(accounts, dict):
+        account_items = [item for item in accounts.values() if isinstance(item, dict)]
+    elif isinstance(accounts, list):
+        account_items = [item for item in accounts if isinstance(item, dict)]
+    plan = ""
+    has_active_subscription = False
+    account_id = ""
+    for item in account_items:
+        account = item.get("account") if isinstance(item.get("account"), dict) else item
+        entitlement = item.get("entitlement") if isinstance(item.get("entitlement"), dict) else {}
+        if isinstance(account, dict):
+            account_id = first_text(account_id, account.get("id"), account.get("account_id"))
+            plan = first_text(plan, normal_plan_type(account.get("plan_type")), normal_plan_type(account.get("planType")))
+        if isinstance(entitlement, dict):
+            has_active_subscription = has_active_subscription or bool(entitlement.get("has_active_subscription"))
+            plan = first_text(
+                plan,
+                normal_plan_type(entitlement.get("subscription_plan")),
+                normal_plan_type(entitlement.get("plan_type")),
+            )
+    if has_active_subscription and plan in {"", "free"}:
+        plan = "plus"
+    if not plan:
+        plan = "unknown"
+    return {
+        "status": "plus" if plan == "plus" and has_active_subscription else plan,
+        "plan_type": plan,
+        "has_active_subscription": has_active_subscription,
+        "account_id": account_id,
+    }
+
+
+def openai_account_check_with_access_token(access_token: str, *, proxy_url: str, user_agent: str) -> dict[str, Any]:
+    status, data, raw = http_get_json_status(
+        CHATGPT_CHECK_URL,
+        headers={
+            "Authorization": f"Bearer {access_token}",
+            "Accept": "application/json",
+            "Referer": "https://chatgpt.com/",
+            "User-Agent": user_agent,
+        },
+        timeout=35,
+        proxy_url=proxy_url,
+    )
+    token_payload = jwt_payload(access_token)
+    token_email = access_token_email(access_token)
+    token_phone = first_text(token_payload.get("phone_number"), token_payload.get("phone"))
+    result = {
+        "http_status": status,
+        "status": "unknown",
+        "status_label": "未知",
+        "plan_type": "",
+        "has_active_subscription": False,
+        "email": token_email,
+        "phone": token_phone,
+        "account_id": "",
+        "message": f"HTTP {status}",
+        "status_source": "online_check",
+        "raw_summary": "",
+    }
+    if status == 200:
+        account_state = account_check_status_from_payload(data)
+        plan = account_state["plan_type"]
+        normalized_status = account_state["status"]
+        if normalized_status not in {"free", "plus", "pro", "team"}:
+            normalized_status = plan if plan in {"free", "plus", "pro", "team"} else "unknown"
+        result.update({
+            "status": normalized_status,
+            "status_label": {"free": "FREE", "plus": "PLUS", "pro": "PRO", "team": "TEAM"}.get(normalized_status, "未知"),
+            "plan_type": plan,
+            "has_active_subscription": bool(account_state["has_active_subscription"]),
+            "account_id": account_state["account_id"],
+            "message": "在线核验完成",
+        })
+    elif status == 401:
+        result.update({"status": "token_invalid", "status_label": "凭证失效", "message": "AT/RT 已失效或无权限"})
+    elif status == 403:
+        text = json.dumps(data, ensure_ascii=False) if data else raw
+        lowered = text.lower()
+        state = "banned" if any(word in lowered for word in ["banned", "deactivated", "disabled", "suspended", "封禁", "停用"]) else "risk_blocked"
+        result.update({
+            "status": state,
+            "status_label": "封禁/停用" if state == "banned" else "风控/受限",
+            "message": "账号封禁、停用或触发风控",
+            "raw_summary": strip_html(text)[:240],
+        })
+    elif status == 429:
+        fields = openai_error_fields(data, raw)
+        result.update({
+            "status": "usage_limit_reached",
+            "status_label": "额度耗尽",
+            "plan_type": fields.get("plan_type") or access_token_plan_type(access_token) or "free",
+            "message": usage_limit_message(fields),
+        })
+    else:
+        result.update({
+            "status": "check_failed",
+            "status_label": "核验失败",
+            "message": protocol_compact_error(data) or strip_html(raw)[:240] or f"HTTP {status}",
+        })
+    return result
+
+
+def extract_account_check_token(item: dict[str, Any]) -> tuple[str, str]:
+    token = first_text(
+        item.get("access_token"),
+        item.get("accessToken"),
+        item.get("at"),
+        item.get("AT"),
+        item.get("token"),
+    )
+    if token:
+        return "access_token", token
+    refresh_token = first_text(
+        item.get("refresh_token"),
+        item.get("refreshToken"),
+        item.get("rt"),
+        item.get("RT"),
+    )
+    if refresh_token:
+        return "refresh_token", refresh_token
+    return "", ""
+
+
+def check_account_subscriptions(payload: dict[str, Any], workspace_id: str = "") -> dict[str, Any]:
+    proxy_url = require_login_proxy_url(dict(payload))
+    user_agent = first_text(payload.get("fingerprint"), payload.get("user_agent"), payload.get("userAgent"))
+    if not user_agent:
+        raise RuntimeError("请先填写 User-Agent / 指纹配置")
+    if not bool(payload.get("risk_confirmed") or payload.get("riskConfirmed")):
+        raise RuntimeError("请先勾选风险确认，再执行在线账号核验")
+    items = payload.get("items")
+    if not isinstance(items, list):
+        items = []
+    max_items = max(1, min(int(payload.get("max_items") or payload.get("maxItems") or len(items) or 1), 20))
+    results: list[dict[str, Any]] = []
+    for item in items[:max_items]:
+        if not isinstance(item, dict):
+            continue
+        email_addr = first_text(item.get("email"), item.get("account"), item.get("name"))
+        token_type, token = extract_account_check_token(item)
+        row: dict[str, Any] = {
+            "id": first_text(item.get("id"), email_addr),
+            "email": email_addr,
+            "status_source": "online_check",
+            "token_type": token_type,
+            "success": False,
+        }
+        if not token:
+            row.update({
+                "status": "needs_token",
+                "status_label": "缺少凭证",
+                "message": "缺少 AT 或 RT，无法在线核验",
+            })
+            results.append(row)
+            continue
+        try:
+            access_token = token
+            if token_type == "refresh_token":
+                status, data, raw = refresh_openai_with_rt(token, proxy_url=proxy_url)
+                if status != 200 or not coerce_text(data.get("access_token")):
+                    status_name, message = refresh_lifecycle_service().classify_oauth_error(status, data, raw)
+                    row.update({
+                        "status": status_name,
+                        "status_label": refresh_lifecycle_service().status_label(status_name),
+                        "message": message,
+                    })
+                    results.append(row)
+                    continue
+                access_token = coerce_text(data.get("access_token"))
+                row["refresh_token_rotated"] = bool(coerce_text(data.get("refresh_token")) and coerce_text(data.get("refresh_token")) != token)
+            checked = openai_account_check_with_access_token(access_token, proxy_url=proxy_url, user_agent=user_agent)
+            row.update(checked)
+            row["success"] = checked.get("status") in {"free", "plus", "pro", "team", "usage_limit_reached"}
+            row["email"] = first_text(row.get("email"), checked.get("email"), email_addr)
+            row["access_token_expires_at"] = access_token_expires_at(access_token)
+            results.append(row)
+        except Exception as exc:
+            details = classify_login_exception(exc)
+            row.update({
+                "status": details.get("code") or "check_failed",
+                "status_label": "核验失败",
+                "message": details.get("message") or str(exc)[:260],
+                "error_hint": details.get("hint", ""),
+            })
+            results.append(row)
+    return {
+        "success": True,
+        "workspace_id": storage_normalize_workspace_id(workspace_id),
+        "results": results,
+        "summary": {
+            "total": len(results),
+            "checked": sum(1 for item in results if item.get("success")),
+            "failed": sum(1 for item in results if not item.get("success")),
+            "plus": sum(1 for item in results if item.get("status") == "plus"),
+            "pro": sum(1 for item in results if item.get("status") == "pro"),
+            "free": sum(1 for item in results if item.get("status") == "free"),
+            "banned": sum(1 for item in results if item.get("status") == "banned"),
+        },
+    }
 
 
 def oauth_base64url(data: bytes) -> str:
@@ -6324,6 +6883,24 @@ def message_six_digit_codes(message: dict[str, Any]) -> list[str]:
             strip_html(coerce_text(message.get("html_body"))),
         ]))
     return [code for code in raw_codes if re.fullmatch(r"\d{6}", code)]
+
+
+def normalize_message_for_code_api(message: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "account": coerce_text(message.get("account")),
+        "sender": coerce_text(message.get("sender")),
+        "subject": coerce_text(message.get("subject")),
+        "received_at": coerce_text(message.get("received_at") or message.get("cached_at")),
+        "provider": coerce_text(message.get("provider")),
+        "mail_type": normalize_mail_type(message.get("mail_type"), " ".join([
+            coerce_text(message.get("sender")),
+            coerce_text(message.get("subject")),
+            coerce_text(message.get("preview")),
+            coerce_text(message.get("body")),
+        ])),
+        "codes": message_six_digit_codes(message),
+        "preview": coerce_text(message.get("preview"))[:240],
+    }
 
 
 def count_six_digit_codes(messages: list[dict[str, Any]]) -> int:

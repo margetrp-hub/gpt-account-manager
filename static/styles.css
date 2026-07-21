@@ -362,6 +362,70 @@ a {
   justify-content: center;
 }
 
+.recover-vault,
+.recover-advanced {
+  margin-top: 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: rgba(255, 255, 255, 0.58);
+  padding: 12px;
+}
+
+.recover-vault h2 {
+  margin: 0;
+  color: var(--ink);
+  font-size: 15px;
+  line-height: 1.25;
+}
+
+.recover-vault p {
+  margin: 5px 0 10px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1.45;
+}
+
+.recover-vault-grid {
+  display: grid;
+  grid-template-columns: minmax(180px, 1fr) minmax(180px, 1fr) auto;
+  gap: 10px;
+  align-items: end;
+}
+
+.recover-vault-grid-short {
+  grid-template-columns: minmax(220px, 1fr) auto;
+}
+
+.recover-vault-grid label {
+  display: grid;
+  gap: 5px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.recover-vault-grid input {
+  width: 100%;
+  min-height: 36px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: rgba(255, 255, 255, 0.82);
+  color: var(--ink);
+  padding: 0 10px;
+}
+
+.recover-advanced summary {
+  cursor: pointer;
+  color: #36506f;
+  font-size: 13px;
+  font-weight: 850;
+}
+
+.recover-advanced .recover-tools {
+  margin: 10px 0 0;
+}
+
 .recover-workspace,
 .recover-empty {
   border: 1px solid var(--line);
@@ -426,11 +490,14 @@ a {
   .recover-actions a,
   .recover-workspace-actions button,
   .recover-backup-grid button,
+  .recover-vault-grid button,
   .recover-file-button {
     width: 100%;
   }
 
-  .recover-backup-grid {
+  .recover-backup-grid,
+  .recover-vault-grid,
+  .recover-vault-grid-short {
     grid-template-columns: 1fr;
   }
 }
@@ -536,6 +603,47 @@ a {
   background: linear-gradient(135deg, #43a4ff, #2267ff);
   color: #fff;
   box-shadow: 0 12px 24px rgba(47, 117, 255, 0.28);
+}
+
+.plugin-tabs {
+  margin-top: 8px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.plugin-tab {
+  min-height: 30px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 12px;
+  border: 1px solid rgba(142, 165, 199, 0.32);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.72);
+  color: #4a6286;
+  text-decoration: none;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.plugin-tab:hover {
+  color: var(--accent-strong);
+  border-color: rgba(47, 117, 255, 0.38);
+  background: rgba(255, 255, 255, 0.96);
+}
+
+.plugin-tab span {
+  width: 14px;
+  text-align: center;
+  color: #89a1c7;
+  font-size: 12px;
+}
+
+.plugin-tab.active {
+  background: rgba(47, 117, 255, 0.12);
+  border-color: rgba(47, 117, 255, 0.26);
+  color: var(--accent-strong);
 }
 
 .workspace {
@@ -1321,7 +1429,7 @@ body.mailbox-controls-collapsed .mailbox-panel {
 
 .refresh-options {
   display: grid;
-  grid-template-columns: auto minmax(220px, 1fr) 96px;
+  grid-template-columns: auto minmax(180px, 1fr) minmax(148px, max-content);
   gap: 6px;
   align-items: center;
 }
@@ -1520,12 +1628,44 @@ body.mailbox-controls-collapsed .mailbox-panel {
 
 .phone-pool-form {
   display: grid;
-  grid-template-columns: minmax(120px, 0.42fr) minmax(190px, 1fr) auto;
+  grid-template-columns: minmax(116px, 0.38fr) minmax(150px, 0.52fr) auto;
   gap: 5px;
 }
 
-.phone-pool-form input {
+.phone-pool-form input,
+.phone-pool-form select,
+.phone-provider-details input {
   min-height: 28px;
+}
+
+.phone-provider-details {
+  display: grid;
+  align-items: center;
+  gap: 5px;
+}
+
+.phone-provider-details {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.phone-provider-details input[data-phone-provider="custom"] {
+  grid-column: 1 / -1;
+}
+
+.refresh-concurrency-control {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: #526983;
+  font-size: 11px;
+  font-weight: 800;
+  white-space: nowrap;
+}
+
+.refresh-concurrency-control select {
+  min-height: 28px;
+  padding: 3px 6px;
+  font-size: 11px;
 }
 
 .phone-mode-tabs {
@@ -3500,6 +3640,295 @@ body.modal-open {
   align-items: stretch;
 }
 
+.account-manager-shell {
+  width: min(1680px, calc(100vw - 24px));
+}
+
+.account-manager-layout {
+  margin-top: 10px;
+}
+
+.account-manager-main {
+  min-height: var(--work-height);
+  display: grid;
+  grid-template-rows: auto auto auto minmax(0, 1fr);
+  gap: 10px;
+  padding: 12px;
+}
+
+.account-manager-head {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(260px, 360px);
+  gap: 12px;
+  align-items: start;
+}
+
+.account-manager-head h1,
+.account-import-panel h2,
+.account-online-panel h2 {
+  margin: 0;
+}
+
+.account-manager-head p,
+.account-import-panel p,
+.account-online-panel p {
+  margin: 6px 0 0;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.account-risk-note,
+.account-stat,
+.account-import-panel,
+.account-online-panel {
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: rgba(255, 255, 255, 0.72);
+  box-shadow: var(--shadow-soft);
+}
+
+.account-risk-note {
+  display: grid;
+  gap: 6px;
+  padding: 12px;
+}
+
+.account-risk-note strong {
+  color: var(--ink);
+  font-size: 13px;
+}
+
+.account-risk-note span {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.account-stats-grid {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.account-stat {
+  min-height: 84px;
+  padding: 12px 14px;
+  display: grid;
+  align-content: space-between;
+  gap: 6px;
+}
+
+.account-stat span {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.account-stat strong {
+  color: var(--ink);
+  font-size: 26px;
+  line-height: 1;
+  font-weight: 900;
+}
+
+.account-stat.premium {
+  border-color: rgba(47, 117, 255, 0.22);
+  background: rgba(237, 245, 255, 0.84);
+}
+
+.account-stat.danger {
+  border-color: rgba(212, 61, 81, 0.24);
+  background: rgba(255, 245, 247, 0.84);
+}
+
+.account-stat.warning {
+  border-color: rgba(214, 158, 46, 0.24);
+  background: rgba(255, 250, 235, 0.9);
+}
+
+.account-manager-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.15fr) minmax(320px, 0.85fr);
+  gap: 10px;
+}
+
+.account-import-panel,
+.account-online-panel {
+  padding: 12px;
+  display: grid;
+  gap: 10px;
+}
+
+.account-import-panel label,
+.account-online-panel label {
+  display: grid;
+  gap: 5px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.account-import-panel textarea,
+.account-online-panel input,
+.account-toolbar input,
+.account-toolbar select {
+  width: 100%;
+}
+
+.account-import-panel textarea {
+  min-height: 164px;
+  font-family: "Cascadia Mono", "Consolas", monospace;
+  font-size: 12px;
+}
+
+.account-import-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.account-import-actions button,
+.account-online-panel button {
+  min-height: 34px;
+}
+
+.account-risk-check {
+  grid-template-columns: 16px minmax(0, 1fr);
+  align-items: start;
+  gap: 8px;
+}
+
+.account-risk-check input {
+  width: 16px;
+  height: 16px;
+  margin-top: 2px;
+}
+
+.account-online-panel em {
+  color: var(--muted);
+  font-size: 12px;
+  font-style: normal;
+  line-height: 1.5;
+}
+
+.account-toolbar {
+  display: grid;
+  grid-template-columns: minmax(240px, 1fr) 132px 156px auto auto auto;
+  gap: 8px;
+  align-items: center;
+}
+
+.account-toolbar button {
+  min-height: 34px;
+}
+
+.account-group-row td {
+  background: rgba(229, 237, 248, 0.76);
+  color: #5f7191;
+  font-size: 11px;
+  font-weight: 900;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.account-table-wrap {
+  min-height: 0;
+  overflow: auto;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: rgba(255, 255, 255, 0.74);
+}
+
+.account-table {
+  width: 100%;
+  border-collapse: collapse;
+  table-layout: fixed;
+}
+
+.account-table th,
+.account-table td {
+  padding: 10px 12px;
+  border-bottom: 1px solid rgba(123, 154, 204, 0.18);
+  text-align: left;
+  vertical-align: top;
+  font-size: 12px;
+}
+
+.account-table th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: rgba(244, 249, 255, 0.96);
+  color: #51627a;
+  font-size: 11px;
+  font-weight: 900;
+}
+
+.account-table td strong,
+.account-table td em,
+.account-table td span {
+  display: block;
+}
+
+.account-table td strong {
+  color: var(--ink);
+  font-size: 13px;
+  font-weight: 850;
+  line-height: 1.35;
+}
+
+.account-table td em,
+.account-table td span {
+  margin-top: 2px;
+  color: var(--muted);
+  font-size: 11px;
+  font-style: normal;
+  line-height: 1.45;
+  word-break: break-word;
+}
+
+.account-status {
+  display: inline-flex !important;
+  align-items: center;
+  justify-content: center;
+  min-height: 24px;
+  width: fit-content;
+  margin-top: 0 !important;
+  padding: 0 8px;
+  border-radius: 999px;
+  font-size: 11px !important;
+  font-weight: 900 !important;
+}
+
+.account-status.status-free {
+  background: rgba(101, 138, 191, 0.12);
+  color: #4d688a;
+}
+
+.account-status.status-plus,
+.account-status.status-pro,
+.account-status.status-team,
+.account-status.status-usage_limit_reached {
+  background: rgba(47, 117, 255, 0.12);
+  color: #0b62d8;
+}
+
+.account-status.status-banned,
+.account-status.status-token_invalid,
+.account-status.status-check_failed {
+  background: rgba(212, 61, 81, 0.12);
+  color: #b53649;
+}
+
+.account-status.status-risk_blocked,
+.account-status.status-needs_token,
+.account-status.status-unregistered,
+.account-status.status-unknown {
+  background: rgba(236, 176, 60, 0.14);
+  color: #8a5a14;
+}
+
 .mailbox-manager-nav,
 .mailbox-manager-main {
   min-height: 0;
@@ -3935,6 +4364,147 @@ body.modal-open {
   width: min(1680px, calc(100vw - 24px));
 }
 
+.plugin-shell {
+  width: min(1680px, calc(100vw - 24px));
+}
+
+.plugin-layout {
+  margin-top: 10px;
+  display: grid;
+  gap: 12px;
+}
+
+.plugin-hero {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(240px, 320px);
+  gap: 12px;
+  align-items: start;
+}
+
+.plugin-hero h1,
+.plugin-hero p {
+  margin: 0;
+}
+
+.plugin-hero p + p,
+.plugin-hero .eyebrow + h1 + p {
+  margin-top: 6px;
+}
+
+.plugin-hero-note {
+  display: grid;
+  gap: 6px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: rgba(255, 255, 255, 0.72);
+}
+
+.plugin-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.plugin-card {
+  min-height: 126px;
+  display: grid;
+  align-content: start;
+  gap: 8px;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: rgba(255, 255, 255, 0.76);
+  color: var(--ink);
+  text-decoration: none;
+  box-shadow: var(--shadow-soft);
+}
+
+.plugin-card:hover {
+  border-color: rgba(47, 117, 255, 0.32);
+  background: rgba(255, 255, 255, 0.94);
+}
+
+.plugin-card span {
+  width: 22px;
+  height: 22px;
+  display: inline-grid;
+  place-items: center;
+  border-radius: 6px;
+  background: rgba(47, 117, 255, 0.1);
+  color: var(--accent);
+  font-size: 13px;
+  font-weight: 900;
+}
+
+.plugin-card strong {
+  font-size: 16px;
+  font-weight: 850;
+}
+
+.plugin-card em {
+  color: var(--muted);
+  font-size: 12px;
+  font-style: normal;
+  line-height: 1.5;
+}
+
+.plugin-config-card {
+  display: grid;
+  gap: 6px;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: rgba(255, 255, 255, 0.76);
+  box-shadow: var(--shadow-soft);
+}
+
+.plugin-config-card span {
+  color: var(--ink);
+  font-size: 13px;
+  font-weight: 850;
+}
+
+.plugin-config-card input {
+  width: 100%;
+}
+
+.plugin-config-card em {
+  color: var(--muted);
+  font-size: 12px;
+  font-style: normal;
+  line-height: 1.45;
+}
+
+.api-grid {
+  display: grid;
+  gap: 10px;
+}
+
+.api-example-card {
+  gap: 10px;
+}
+
+.api-code-block {
+  margin: 0;
+  min-height: 84px;
+  padding: 12px;
+  border: 1px solid rgba(142, 165, 199, 0.24);
+  border-radius: 8px;
+  background: rgba(245, 248, 255, 0.84);
+  color: #233650;
+  font-family: "Cascadia Mono", "Consolas", monospace;
+  font-size: 12px;
+  line-height: 1.55;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.api-code-actions {
+  display: flex;
+  justify-content: flex-end;
+}
+
 .dashboard-layout {
   margin-top: 10px;
   display: grid;
@@ -4333,6 +4903,20 @@ body.modal-open {
 }
 
 @media (max-width: 1320px) {
+  .account-manager-head,
+  .account-manager-grid,
+  .plugin-hero {
+    grid-template-columns: 1fr;
+  }
+
+  .account-toolbar {
+    grid-template-columns: minmax(180px, 1fr) 120px 140px auto auto auto;
+  }
+
+  .account-stats-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
   .mailbox-manager-layout {
     grid-template-columns: 180px minmax(0, 1fr);
   }
@@ -4382,6 +4966,18 @@ body.modal-open {
 }
 
 @media (max-width: 980px) {
+  .account-manager-main {
+    min-height: 640px;
+  }
+
+  .account-toolbar {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .account-toolbar input {
+    grid-column: 1 / -1;
+  }
+
   .mailbox-manager-layout {
     height: auto;
     grid-template-columns: 1fr;
@@ -4447,6 +5043,7 @@ body.modal-open {
   .refresh-options.temp-sync-options,
   .pickup-import-panel,
   .phone-pool-form,
+  .phone-provider-details,
   .credential-hint-bar {
     grid-template-columns: 1fr;
   }
@@ -4494,6 +5091,10 @@ body.modal-open {
     flex-direction: column;
   }
 
+  .plugin-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
   .dashboard-controls {
     width: 100%;
     grid-template-columns: minmax(0, 1fr) auto;
@@ -4516,6 +5117,21 @@ body.modal-open {
   .shell {
     width: calc(100vw - 12px);
     margin: 6px auto;
+  }
+
+  .account-stats-grid,
+  .account-toolbar,
+  .account-import-actions {
+    grid-template-columns: 1fr;
+  }
+
+  .account-import-actions {
+    display: grid;
+  }
+
+  .account-import-actions button,
+  .account-online-panel button {
+    width: 100%;
   }
 
   .mailbox-manager-nav {
@@ -4688,6 +5304,10 @@ body.modal-open {
 
   .dashboard-insight-strip,
   .dashboard-mini-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .plugin-grid {
     grid-template-columns: 1fr;
   }
 

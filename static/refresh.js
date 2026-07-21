@@ -1,25 +1,16 @@
 const WORKSPACE_ID_STORAGE_KEY = "ctgptm.workspaceId";
-
-function bootstrapWorkspaceId() {
-  if (window.GAM?.base?.resolveWorkspaceId) {
-    return window.GAM.base.resolveWorkspaceId(WORKSPACE_ID_STORAGE_KEY);
-  }
-  const existing = window.GAM?.base?.getWorkspaceId?.(WORKSPACE_ID_STORAGE_KEY)
-    || localStorage.getItem(WORKSPACE_ID_STORAGE_KEY)
-    || "";
-  if (/^[A-Za-z0-9][A-Za-z0-9_.-]{5,63}$/.test(existing)) return existing;
-  const next = `ws_${crypto.randomUUID().replace(/-/g, "")}`;
-  localStorage.setItem(WORKSPACE_ID_STORAGE_KEY, next);
-  return next;
-}
-
-const workspaceId = bootstrapWorkspaceId();
+const sharedStoragePrefixes = window.GAM?.base?.WORKSPACE_SCOPED_PREFIXES || {};
+const sharedLegacyKeys = window.GAM?.base?.LEGACY_SHARED_KEYS || {};
+const workspaceId = window.GAM?.base?.resolveWorkspaceId?.(WORKSPACE_ID_STORAGE_KEY)
+  || window.GAM?.base?.getWorkspaceId?.(WORKSPACE_ID_STORAGE_KEY)
+  || localStorage.getItem(WORKSPACE_ID_STORAGE_KEY)
+  || `ws_${crypto.randomUUID().replace(/-/g, "")}`;
 const LEGACY_STORAGE_KEYS = {
-  accounts: "ctgptm.mail.accounts",
-  categories: "ctgptm.mail.categories",
-  refreshQueue: "ctgptm.mail.refreshQueue",
-  refreshSettings: "ctgptm.mail.refreshSettings",
-  phonePool: "ctgptm.mail.phonePool",
+  accounts: sharedLegacyKeys.legacyMailAccounts || "ctgptm.mail.accounts",
+  categories: sharedLegacyKeys.legacyMailCategories || "ctgptm.mail.categories",
+  refreshQueue: sharedLegacyKeys.legacyRefreshQueue || "ctgptm.mail.refreshQueue",
+  refreshSettings: sharedStoragePrefixes.refreshSettings?.slice(0, -1) || "ctgptm.mail.refreshSettings",
+  phonePool: sharedLegacyKeys.legacyPhonePool || "ctgptm.mail.phonePool",
 };
 const STORAGE_KEYS = {
   accounts: `${LEGACY_STORAGE_KEYS.accounts}:${workspaceId}`,
@@ -29,6 +20,7 @@ const STORAGE_KEYS = {
   phonePool: `${LEGACY_STORAGE_KEYS.phonePool}:${workspaceId}`,
   workspaceId: WORKSPACE_ID_STORAGE_KEY,
 };
+const lineLabels = window.GAM?.appShell?.LINE_LABELS || {};
 
 const EMPTY_CATEGORY_LABEL = "未分组";
 const IMPORT_PLACEHOLDERS = {
@@ -81,6 +73,16 @@ const refreshManualCode = window.GAM?.refreshManualCode;
 const refreshPhonePool = window.GAM?.refreshPhonePool;
 const refreshQueueModel = window.GAM?.refreshQueueModel;
 const refreshQueueView = window.GAM?.refreshQueueView;
+const mailboxAccountModel = window.GAM?.mailboxAccountModel?.createMailboxAccountModel?.({
+  defaultTempWorkerUrl: "",
+  reservedCategoryNames: ["已封禁"],
+  legacyCategoryNames: ["默认", "default", "outlook", "临时邮箱", "temp", "microsoft", "generic", "邮箱", "mailbox"],
+  serviceLabels: {
+    microsoft: "Outlook",
+    temp: "临时邮箱",
+    generic: "其他邮箱",
+  },
+});
 const authQueryToken = base?.persistAdminTokenFromQuery?.() || new URLSearchParams(window.location.search).get("token") || "";
 if (!base && authQueryToken) {
   localStorage.setItem("ctgptm.admin.toolToken", authQueryToken);
@@ -121,7 +123,9 @@ if (JSON.stringify(storedRefreshQueue) !== JSON.stringify(normalizedRefreshQueue
 }
 
 const state = {
-  accounts: loadJson(STORAGE_KEYS.accounts, []),
+  accounts: mailboxAccountModel?.normalizeStoredAccounts
+    ? mailboxAccountModel.normalizeStoredAccounts(loadJson(STORAGE_KEYS.accounts, []))
+    : loadJson(STORAGE_KEYS.accounts, []),
   categories: loadJson(STORAGE_KEYS.categories, []),
   queue: normalizedRefreshQueue,
   selectedAccounts: new Set(),
@@ -249,7 +253,11 @@ const els = {
   cancelPickupImportModal: document.querySelector("#cancelPickupImportModal"),
   confirmPickupImport: document.querySelector("#confirmPickupImport"),
   phoneNumber: document.querySelector("#phoneNumber"),
+  phoneProvider: document.querySelector("#phoneProvider"),
   phoneApiUrl: document.querySelector("#phoneApiUrl"),
+  phoneApiKey: document.querySelector("#phoneApiKey"),
+  phoneActivationId: document.querySelector("#phoneActivationId"),
+  phoneProviderEndpoint: document.querySelector("#phoneProviderEndpoint"),
   phoneModeBatch: document.querySelector("#phoneModeBatch"),
   phoneModeOneToOne: document.querySelector("#phoneModeOneToOne"),
   phoneBatchPanel: document.querySelector("#phoneBatchPanel"),
@@ -277,7 +285,7 @@ const settings = loadJson(STORAGE_KEYS.refreshSettings, {});
 els.useProxy.checked = true;
 els.proxyUrl.value = settings.proxy_url || "";
 if (els.loginStrategy) els.loginStrategy.value = "protocol";
-if (els.loginConcurrency) els.loginConcurrency.value = "1";
+if (els.loginConcurrency) els.loginConcurrency.value = ["1", "2", "3"].includes(String(settings.login_concurrency)) ? String(settings.login_concurrency) : "1";
 if (els.autoUpdateCpa) els.autoUpdateCpa.checked = Boolean(settings.auto_update_cpa);
 if (els.cpaBaseUrl) els.cpaBaseUrl.value = settings.cpa_base_url || "";
 if (els.cpaManagementKey) els.cpaManagementKey.value = settings.cpa_management_key || "";
@@ -454,6 +462,8 @@ const ERROR_MANUAL = {
   imap_token_failed: "IMAP 授权失败",
   graph_fetch_failed: "Graph 收信失败",
   imap_fetch_failed: "IMAP 收信失败",
+  outlook_reauth_required: "Outlook 需要重新授权",
+  outlook_scope_missing: "Outlook 权限不足",
   generic_config_missing: "其他邮箱配置缺失",
   generic_auth_failed: "其他邮箱认证失败",
   generic_imap_failed: "其他邮箱 IMAP 失败",
@@ -493,6 +503,15 @@ const ERROR_MANUAL = {
   proxy_ip_unavailable: "代理出口不可用",
   phone_pool_empty: "手机池为空",
   phone_pool_api_invalid: "手机 API 格式错误",
+  phone_provider_unsupported: "接码平台不支持",
+  phone_provider_key_missing: "缺少平台密钥",
+  phone_provider_key_invalid: "平台密钥无效",
+  phone_provider_no_balance: "平台余额不足",
+  phone_provider_endpoint_invalid: "平台地址格式错误",
+  phone_provider_request_failed: "接码平台请求失败",
+  phone_provider_response_invalid: "接码平台响应异常",
+  phone_activation_missing: "接码订单不存在或已失效",
+  phone_code_pending: "等待手机验证码",
   phone_code_missing: "未收到手机验证码",
   phone_code_fetch_failed: "手机取码失败",
   login_cancelled: "已终止",
@@ -593,6 +612,12 @@ function inferErrorCode(job = {}) {
   }
   if (/dns|name resolution|name or service not known|getaddrinfo|解析失败/.test(text)) {
     return "dns_failed";
+  }
+  if (/interaction_required|consent_required|login_required|authorization_pending|aadsts65001|aadsts50076|aadsts50078/.test(text)) {
+    return "outlook_reauth_required";
+  }
+  if (/(insufficient_scope|imap\.accessasuser\.all|mail\.read)/.test(text) && /(scope|graph|imap|oauth|token failed|permission|forbidden)/.test(text)) {
+    return "outlook_scope_missing";
   }
   if (/graph token failed|graph 授权/.test(text)) {
     return "graph_token_failed";
@@ -1331,12 +1356,13 @@ function commitQueueRowFailure(row, current, details, { render = true, log = tru
 }
 
 function saveSettings() {
-  if (els.loginConcurrency) els.loginConcurrency.value = "1";
+  const loginConcurrency = Math.min(3, Math.max(1, Number.parseInt(els.loginConcurrency?.value || "1", 10) || 1));
+  if (els.loginConcurrency) els.loginConcurrency.value = String(loginConcurrency);
   saveJson(STORAGE_KEYS.refreshSettings, {
     use_proxy: true,
     proxy_url: els.proxyUrl.value.trim(),
     login_strategy: "protocol",
-    login_concurrency: 1,
+    login_concurrency: loginConcurrency,
     auto_update_cpa: els.autoUpdateCpa ? els.autoUpdateCpa.checked : false,
     cpa_base_url: els.cpaBaseUrl ? els.cpaBaseUrl.value.trim() : "",
     cpa_management_key: els.cpaManagementKey ? els.cpaManagementKey.value.trim() : "",
@@ -1399,6 +1425,10 @@ function normalizeQueue(value) {
       phone_id: row.phone_id || row.phone_binding_id || "",
       phone_number: row.phone_number || "",
       phone_api_url: row.phone_api_url || "",
+      phone_provider: row.phone_provider || "custom",
+      phone_api_key: row.phone_api_key || "",
+      phone_activation_id: row.phone_activation_id || "",
+      phone_provider_endpoint: row.phone_provider_endpoint || "",
       phone_code: String(row.phone_code || row.manual_phone_code || ""),
       phone_code_message: String(row.phone_code_message || ""),
       phone_code_checked_at: String(row.phone_code_checked_at || ""),
@@ -1430,8 +1460,15 @@ function normalizePhonePool(value) {
   const seen = new Set();
   return value.map((item) => {
     const phone = String(item?.phone || "").trim();
+    const rawProvider = String(item?.provider || item?.phone_provider || "").trim().toLowerCase().replace(/[^a-z0-9]+/g, "");
+    const provider = ["herosms", "hero"].includes(rawProvider)
+      ? "herosms"
+      : (["smsbower", "bower"].includes(rawProvider) ? "smsbower" : "custom");
     const apiUrl = String(item?.api_url || item?.apiUrl || "").trim();
-    if (!phone || !apiUrl) return null;
+    const apiKey = String(item?.api_key || item?.apiKey || item?.phone_api_key || "").trim();
+    const activationId = String(item?.activation_id || item?.activationId || item?.phone_activation_id || "").trim();
+    const endpoint = String(item?.endpoint || item?.provider_endpoint || item?.phone_provider_endpoint || "").trim();
+    if (!phone || (provider === "custom" ? !apiUrl : (!apiKey || !activationId))) return null;
     const id = String(item?.id || `phone:${phone.toLowerCase()}`);
     const key = id.toLowerCase();
     if (seen.has(key)) return null;
@@ -1440,7 +1477,11 @@ function normalizePhonePool(value) {
       id,
       mode: item?.mode === "bound" || item?.mode === "one_to_one" ? "bound" : "batch",
       phone,
+      provider,
       api_url: apiUrl,
+      api_key: apiKey,
+      activation_id: activationId,
+      endpoint,
       account_email: String(item?.account_email || item?.accountEmail || "").trim().toLowerCase(),
       last_code: String(item?.last_code || item?.lastCode || ""),
       last_message: String(item?.last_message || item?.lastMessage || ""),
@@ -1502,6 +1543,28 @@ function sourceRefreshState(account) {
   if (saved?.auth_file || rows.some((row) => row.auth_file || rowState(row).status === "success")) {
     return { status: "success", label: "成功", tone: "success", message: "已生成 auth_file" };
   }
+  const running = rows.find((row) => ["queued", "running"].includes(rowState(row).status));
+  if (running) {
+    return { status: "running", label: "执行中", tone: "running", message: "" };
+  }
+  const failed = rows.find((row) => {
+    const job = rowState(row);
+    return job.status === "failed" && isPhoneVerificationError(job.error_code, `${job.error || ""} ${job.error_hint || ""}`);
+  });
+  if (failed) {
+    return { status: "failed", label: "手机验证", tone: "failed", message: formatJobError(rowState(failed)) };
+  }
+  const needsCode = rows.find((row) => {
+    const job = rowState(row);
+    return job.status === "failed" && isCodePickupError(job.error_code, `${job.error || ""} ${job.error_hint || ""}`);
+  });
+  if (needsCode) {
+    return { status: "needs_code", label: "需要接码", tone: "needs-code", message: formatJobError(rowState(needsCode)) };
+  }
+  const anyFailed = rows.find((row) => rowState(row).status === "failed");
+  if (anyFailed) {
+    return { status: "failed", label: "失败", tone: "failed", message: formatJobError(rowState(anyFailed)) };
+  }
   const mailStatus = String(account.mail_verify_status || account.last_status || "").toLowerCase();
   if (mailStatus === "error" || mailStatus === "failed") {
     return {
@@ -1526,27 +1589,6 @@ function sourceRefreshState(account) {
       tone: "success",
       message: "邮箱取信正常",
     };
-  }
-  const failed = rows.find((row) => {
-    const job = rowState(row);
-    return job.status === "failed" && isPhoneVerificationError(job.error_code, `${job.error || ""} ${job.error_hint || ""}`);
-  });
-  if (failed) {
-    return { status: "failed", label: "手机验证", tone: "failed", message: formatJobError(rowState(failed)) };
-  }
-  const needsCode = rows.find((row) => {
-    const job = rowState(row);
-    return job.status === "failed" && isCodePickupError(job.error_code, `${job.error || ""} ${job.error_hint || ""}`);
-  });
-  if (needsCode) {
-    return { status: "needs_code", label: "需要接码", tone: "needs-code", message: formatJobError(rowState(needsCode)) };
-  }
-  const anyFailed = rows.find((row) => rowState(row).status === "failed");
-  if (anyFailed) {
-    return { status: "failed", label: "失败", tone: "failed", message: formatJobError(rowState(anyFailed)) };
-  }
-  if (rows.some((row) => ["queued", "running"].includes(rowState(row).status))) {
-    return { status: "running", label: "执行中", tone: "running", message: "" };
   }
   return { status: "idle", label: "未处理", tone: "idle", message: "" };
 }
@@ -2065,6 +2107,7 @@ refreshPhonePoolHelper = refreshPhonePool?.createRefreshPhonePoolHelper?.({
     phoneMatches,
   },
 });
+refreshPhonePoolHelper?.syncPhoneProviderForm?.();
 
 function validPhoneApiUrl(value) {
   return refreshPhonePoolHelper?.validPhoneApiUrl?.(value) || false;
@@ -2220,8 +2263,8 @@ function missingCredentialDetails(row) {
       : "这个账号还没有导入对应取码邮箱",
     error_code: "mail_credentials_missing",
     error_hint: isTempLike
-      ? "先在本页同步队列 JWT，或到账号管理页导入 邮箱----JWT"
-      : "先到账号管理页导入 Outlook 四段凭证，或导入其他邮箱授权码 / IMAP / POP3 / API 取信配置，再重新执行",
+      ? `先在本页同步队列 JWT，或到${lineLabels.subscriptionsPage || "订阅管理页"}导入 邮箱----JWT`
+      : `先到${lineLabels.subscriptionsPage || "订阅管理页"}导入 Outlook 四段凭证，或导入其他邮箱授权码 / IMAP / POP3 / API 取信配置，再重新执行`,
   };
 }
 
@@ -2266,6 +2309,10 @@ function loginPayload(row) {
     password,
     phone_number: phoneEntry?.phone || row.phone_number || "",
     phone_api_url: phoneEntry?.api_url || row.phone_api_url || "",
+    phone_provider: phoneEntry?.provider || row.phone_provider || "custom",
+    phone_api_key: phoneEntry?.api_key || row.phone_api_key || "",
+    phone_activation_id: phoneEntry?.activation_id || row.phone_activation_id || "",
+    phone_provider_endpoint: phoneEntry?.endpoint || row.phone_provider_endpoint || "",
     phone_binding_id: phoneEntry?.id || row.phone_id || "",
     phone_pool: phonePoolPayload(),
     manual_email_code: row.manual_email_code || "",
@@ -2844,18 +2891,28 @@ async function runQueuedRows(runToken) {
   const oldText = els.startSelected.textContent;
   els.startSelected.textContent = "执行中";
   state.runProxyIps = new Set();
-  if (els.loginConcurrency) els.loginConcurrency.value = "1";
-  addLog(`开始执行队列：${queuedRows().length} 个账号，单账号顺序处理`, "info");
+  const concurrency = Math.min(3, Math.max(1, Number.parseInt(els.loginConcurrency?.value || "1", 10) || 1));
+  if (els.loginConcurrency) els.loginConcurrency.value = String(concurrency);
+  const activeRows = new Set();
+  addLog(`开始执行队列：${queuedRows().length} 个账号，并发 ${concurrency}；每账号独立代理出口`, "info");
   try {
-    while (runToken === state.runnerToken) {
-      const row = queuedRows()[0];
-      if (!row) break;
-      await startLogin(row);
-      if (runToken !== state.runnerToken) break;
-      if (queuedRows().length) {
-        await sleep(1500);
+    const worker = async () => {
+      while (runToken === state.runnerToken) {
+        const row = queuedRows().find((candidate) => !activeRows.has(candidate.id));
+        if (!row) break;
+        activeRows.add(row.id);
+        try {
+          await startLogin(row);
+        } finally {
+          activeRows.delete(row.id);
+        }
+        if (runToken !== state.runnerToken) break;
+        if (queuedRows().length) {
+          await sleep(1500);
+        }
       }
-    }
+    };
+    await Promise.all(Array.from({ length: Math.min(concurrency, queuedRows().length) }, worker));
   } finally {
     els.startSelected.disabled = false;
     els.retryFailed.disabled = false;
@@ -3348,7 +3405,9 @@ function mergeServerAccountsSnapshot(items) {
       byId.set(item.id, item);
     }
   });
-  state.accounts = [...byId.values()].sort((a, b) => String(a.email || "").localeCompare(String(b.email || "")));
+  state.accounts = mailboxAccountModel?.dedupeAccounts
+    ? mailboxAccountModel.dedupeAccounts(byId.values())
+    : [...byId.values()].sort((a, b) => String(a.email || "").localeCompare(String(b.email || "")));
   invalidateSourceAccountsCache();
 }
 
@@ -3558,6 +3617,9 @@ if (els.saveManualPhoneCode) {
 }
 if (els.pollSelectedPhone) {
   els.pollSelectedPhone.addEventListener("click", pollSelectedPhoneCode);
+}
+if (els.phoneProvider) {
+  els.phoneProvider.addEventListener("change", () => refreshPhonePoolHelper?.syncPhoneProviderForm?.());
 }
 els.closeManualCodeModal?.addEventListener("click", closeManualCodeDialog);
 els.cancelManualCodeModal?.addEventListener("click", closeManualCodeDialog);

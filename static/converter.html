@@ -806,11 +806,12 @@
         }
       }
     </style>
-    <link rel="stylesheet" href="/forge-theme.css?v={{APP_VERSION}}" />
-    <script src="/nav-links.js?v={{APP_VERSION}}" defer></script>
-    <script src="/i18n.js?v={{APP_VERSION}}" defer></script>
+      <link rel="stylesheet" href="/forge-theme.css?v={{APP_VERSION}}" />
+      <script src="/shared/app-shell.js?v={{APP_VERSION}}" defer></script>
+      <script src="/nav-links.js?v={{APP_VERSION}}" defer></script>
+      <script src="/i18n.js?v={{APP_VERSION}}" defer></script>
   </head>
-  <body>
+    <body data-app-section="plugin" data-app-current="converter">
     <main class="app">
       <header class="topbar">
         <a class="brand" href="/" aria-label="GPT账号管理助手">
@@ -836,40 +837,8 @@
         </div>
       </header>
 
-      <nav class="module-tabs" aria-label="功能导航">
-        <a class="module-tab" href="/">
-          <span>✉</span>
-          <strong>账号管理</strong>
-        </a>
-        <a class="module-tab" href="/dashboard.html">
-          <span>▣</span>
-          <strong>仪表盘</strong>
-        </a>
-        <a class="module-tab" href="/mailboxes.html">
-          <span>▤</span>
-          <strong>邮箱管理</strong>
-        </a>
-        <a class="module-tab" href="/refresh.html">
-          <span>▶</span>
-          <strong>凭证刷新</strong>
-        </a>
-        <a class="module-tab active" href="/converter.html" aria-current="page">
-          <span>⇄</span>
-          <strong>Session 转换</strong>
-        </a>
-        <span class="module-tab">
-          <span>◌</span>
-          <strong>本地解析</strong>
-        </span>
-        <span class="module-tab">
-          <span>◇</span>
-          <strong>不写入存储</strong>
-        </span>
-        <a class="module-tab" href="/warehouse.html">
-          <span>↻</span>
-          <strong>CPA 仓管</strong>
-        </a>
-      </nav>
+      <nav class="module-tabs" aria-label="功能导航" data-app-nav></nav>
+      <nav class="plugin-tabs" aria-label="插件导航" data-plugin-nav></nav>
 
       <section class="toolbar" aria-label="输出控制">
         <div class="segmented" role="group" aria-label="输出格式">

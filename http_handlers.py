@@ -16,6 +16,10 @@ DashboardStatsBuilder = Callable[..., dict[str, Any]]
 LoginExceptionClassifier = Callable[[Exception], dict[str, Any]]
 WorkspaceRecoveryBuilder = Callable[[list[str]], dict[str, Any]]
 WorkspaceRecoveryListBuilder = Callable[[], dict[str, Any]]
+WorkspacePasswordSetter = Callable[[dict[str, Any], str], dict[str, Any]]
+WorkspacePasswordRecovery = Callable[[dict[str, Any]], dict[str, Any]]
+AccountSubscriptionChecker = Callable[[dict[str, Any], str], dict[str, Any]]
+WorkspaceMailCodeReader = Callable[[str, dict[str, Any]], dict[str, Any]]
 
 
 @dataclass(frozen=True)
@@ -36,6 +40,10 @@ class HttpHandlers:
     public_stats_payload: Callable[[], dict[str, Any]]
     workspace_recovery_payload: WorkspaceRecoveryBuilder
     workspace_recovery_list_payload: WorkspaceRecoveryListBuilder
+    set_workspace_recovery_password: WorkspacePasswordSetter
+    recover_workspace_by_password: WorkspacePasswordRecovery
+    check_account_subscriptions: AccountSubscriptionChecker
+    workspace_mail_code_response: WorkspaceMailCodeReader
     upgrade_status_payload: Callable[[], dict[str, Any]]
     get_client_mail_fetch_job: Callable[[str, str], dict[str, Any]]
     send_workspace_messages_json: WorkspaceMessagesSender
@@ -150,6 +158,10 @@ class HttpHandlers:
             handler.end_headers()
             return True
         static_aliases = {
+            "/inbox": "index.html",
+            "/accounts": "accounts.html",
+            "/api-docs": "api.html",
+            "/cdk": "cdk.html",
             "/converter": "converter.html",
             "/dashboard": "dashboard.html",
             "/refresh": "refresh.html",
@@ -213,6 +225,23 @@ class HttpHandlers:
                 self.send_workspace_messages_json(handler, handler.workspace_id(), params=params)
             except Exception as exc:
                 return self._bad_request(handler, exc)
+            return True
+        if parsed_request.path == "/client-api/mail-code":
+            try:
+                params = urllib.parse.parse_qs(parsed_request.query)
+                payload = {
+                    "email": params.get("email", [""])[0] or params.get("account", [""])[0],
+                    "source": params.get("source", ["all"])[0],
+                    "sender": params.get("sender", [""])[0],
+                    "query": params.get("query", [""])[0],
+                    "category": params.get("category", ["all"])[0],
+                    "provider": params.get("provider", ["auto"])[0],
+                    "limit": params.get("limit", ["20"])[0],
+                    "live": params.get("live", [""])[0],
+                }
+                handler.send_json(self.workspace_mail_code_response(handler.workspace_id(), payload))
+            except Exception as exc:
+                return self._bad_request(handler, exc, code="mail_code_read_failed")
             return True
         if parsed_request.path == "/client-api/dashboard-stats":
             try:
@@ -292,6 +321,20 @@ class HttpHandlers:
             params = urllib.parse.parse_qs(parsed_request.query)
             self.send_workspace_messages_json(handler, workspace, params=params)
             return True
+        if parsed_request.path == "/api/mail-code":
+            params = urllib.parse.parse_qs(parsed_request.query)
+            payload = {
+                "email": params.get("email", [""])[0] or params.get("account", [""])[0],
+                "source": params.get("source", ["all"])[0],
+                "sender": params.get("sender", [""])[0],
+                "query": params.get("query", [""])[0],
+                "category": params.get("category", ["all"])[0],
+                "provider": params.get("provider", ["auto"])[0],
+                "limit": params.get("limit", ["20"])[0],
+                "live": params.get("live", [""])[0],
+            }
+            handler.send_json(self.workspace_mail_code_response(workspace, payload))
+            return True
         handler.send_error(HTTPStatus.NOT_FOUND)
         return True
 
@@ -344,6 +387,12 @@ class HttpHandlers:
             except Exception as exc:
                 return self._bad_request(handler, exc)
             return True
+        if handler.path == "/client-api/mail-code":
+            try:
+                handler.send_json(self.workspace_mail_code_response(handler.workspace_id(), handler.read_json()))
+            except Exception as exc:
+                return self._bad_request(handler, exc, code="mail_code_read_failed")
+            return True
         if self.cpa_http_handlers.handle_client_post(handler):
             return True
         if handler.path == "/client-api/proxy/check":
@@ -382,11 +431,34 @@ class HttpHandlers:
             except Exception as exc:
                 return self._bad_request(handler, exc, code="delete_failed")
             return True
+        if handler.path == "/client-api/accounts/check-subscription":
+            try:
+                handler.send_json(self.check_account_subscriptions(handler.read_json(), handler.workspace_id()))
+            except Exception as exc:
+                return self._classified_bad_request(
+                    handler,
+                    exc,
+                    default_code="account_subscription_check_failed",
+                    include_retryable=True,
+                )
+            return True
+        if handler.path == "/client-api/workspaces/recovery-password":
+            try:
+                handler.send_json(self.set_workspace_recovery_password(handler.read_json(), handler.workspace_id()))
+            except Exception as exc:
+                return self._bad_request(handler, exc, code="workspace_password_failed")
+            return True
+        if handler.path == "/client-api/workspaces/recover-by-password":
+            try:
+                handler.send_json(self.recover_workspace_by_password(handler.read_json()))
+            except Exception as exc:
+                return self._bad_request(handler, exc, code="workspace_password_recover_failed")
+            return True
         if handler.path == "/client-api/phone-code/poll":
             try:
                 handler.send_json(self.poll_phone_code(handler.read_json()))
             except Exception as exc:
-                return self._bad_request(handler, exc, code="phone_code_fetch_failed")
+                return self._bad_request(handler, exc, code=getattr(exc, "error_code", "phone_code_fetch_failed"))
             return True
         return False
 

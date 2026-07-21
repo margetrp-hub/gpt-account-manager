@@ -1,27 +1,20 @@
 const WORKSPACE_ID_STORAGE_KEY = "ctgptm.workspaceId";
-
-function bootstrapWorkspaceId() {
-  if (window.GAM?.base?.resolveWorkspaceId) {
-    return window.GAM.base.resolveWorkspaceId(WORKSPACE_ID_STORAGE_KEY);
-  }
-  const existing = window.GAM?.base?.getWorkspaceId?.(WORKSPACE_ID_STORAGE_KEY)
-    || localStorage.getItem(WORKSPACE_ID_STORAGE_KEY)
-    || "";
-  if (/^[A-Za-z0-9][A-Za-z0-9_.-]{5,63}$/.test(existing)) return existing;
-  const next = `ws_${crypto.randomUUID().replace(/-/g, "")}`;
-  localStorage.setItem(WORKSPACE_ID_STORAGE_KEY, next);
-  return next;
-}
-
-const workspaceId = bootstrapWorkspaceId();
+const sharedStoragePrefixes = window.GAM?.base?.WORKSPACE_SCOPED_PREFIXES || {};
+const sharedLegacyKeys = window.GAM?.base?.LEGACY_SHARED_KEYS || {};
+const workspaceId = window.GAM?.base?.resolveWorkspaceId?.(WORKSPACE_ID_STORAGE_KEY)
+  || window.GAM?.base?.getWorkspaceId?.(WORKSPACE_ID_STORAGE_KEY)
+  || localStorage.getItem(WORKSPACE_ID_STORAGE_KEY)
+  || `ws_${crypto.randomUUID().replace(/-/g, "")}`;
 const LEGACY_STORAGE_KEYS = {
-  accounts: "ctgptm.mail.accounts",
-  categories: "ctgptm.mail.categories",
-  messages: "ctgptm.mail.messages",
-  ignoredMessages: "ctgptm.mail.ignoredMessages",
-  refreshQueue: "ctgptm.mail.refreshQueue",
-  abnormalRows: "ctgptm.mail.abnormalRows",
-  mailboxControlsCollapsed: "ctgptm.mail.mailboxControlsCollapsed.v2",
+  accounts: sharedLegacyKeys.legacyMailAccounts || "ctgptm.mail.accounts",
+  categories: sharedLegacyKeys.legacyMailCategories || "ctgptm.mail.categories",
+  messages: sharedStoragePrefixes.mailMessages?.slice(0, -1) || "ctgptm.mail.messages",
+  ignoredMessages: sharedLegacyKeys.legacyIgnoredMessages || "ctgptm.mail.ignoredMessages",
+  refreshQueue: sharedLegacyKeys.legacyRefreshQueue || "ctgptm.mail.refreshQueue",
+  abnormalRows: sharedLegacyKeys.legacyAbnormalRows || "ctgptm.mail.abnormalRows",
+  mailboxControlsCollapsed: sharedStoragePrefixes.mailboxControlsCollapsed?.slice(0, -1) || "ctgptm.mail.mailboxControlsCollapsed.v2",
+  cpaSettings: sharedLegacyKeys.legacyCpaSettings || "ctgptm.mail.cpaSettings",
+  tempSettings: sharedLegacyKeys.legacyTempSettings || "ctgptm.mail.tempSettings",
 };
 const STORAGE_KEYS = {
   accounts: `${LEGACY_STORAGE_KEYS.accounts}:${workspaceId}`,
@@ -30,8 +23,8 @@ const STORAGE_KEYS = {
   ignoredMessages: `${LEGACY_STORAGE_KEYS.ignoredMessages}:${workspaceId}`,
   refreshQueue: `${LEGACY_STORAGE_KEYS.refreshQueue}:${workspaceId}`,
   abnormalRows: `${LEGACY_STORAGE_KEYS.abnormalRows}:${workspaceId}`,
-  cpaSettings: "ctgptm.mail.cpaSettings",
-  tempSettings: "ctgptm.mail.tempSettings",
+  cpaSettings: `${LEGACY_STORAGE_KEYS.cpaSettings}:${workspaceId}`,
+  tempSettings: `${LEGACY_STORAGE_KEYS.tempSettings}:${workspaceId}`,
   workspaceId: WORKSPACE_ID_STORAGE_KEY,
   mailboxControlsCollapsed: `${LEGACY_STORAGE_KEYS.mailboxControlsCollapsed}:${workspaceId}`,
 };
@@ -251,8 +244,18 @@ let mailboxImportUiHelper = null;
 let mailboxMessageView = null;
 let refreshQueueHelper = null;
 
-const cpaSettings = loadJson(STORAGE_KEYS.cpaSettings, {});
-const tempSettings = loadJson(STORAGE_KEYS.tempSettings, {});
+const cpaSettings = base?.loadScopedJson
+  ? base.loadScopedJson(STORAGE_KEYS.cpaSettings, LEGACY_STORAGE_KEYS.cpaSettings, {})
+  : loadJson(STORAGE_KEYS.cpaSettings, {});
+const tempSettings = base?.loadScopedJson
+  ? base.loadScopedJson(STORAGE_KEYS.tempSettings, LEGACY_STORAGE_KEYS.tempSettings, {})
+  : loadJson(STORAGE_KEYS.tempSettings, {});
+if (!localStorage.getItem(STORAGE_KEYS.cpaSettings) && Object.keys(cpaSettings || {}).length) {
+  saveJson(STORAGE_KEYS.cpaSettings, cpaSettings);
+}
+if (!localStorage.getItem(STORAGE_KEYS.tempSettings) && Object.keys(tempSettings || {}).length) {
+  saveJson(STORAGE_KEYS.tempSettings, tempSettings);
+}
 if (els.cpaBaseUrl) els.cpaBaseUrl.value = cpaSettings.base_url || "";
 if (els.cpaKey) els.cpaKey.value = cpaSettings.management_key || "";
 if (els.cpaLimit) els.cpaLimit.value = cpaSettings.max_items || "50";
@@ -667,6 +670,12 @@ function humanizeMailError(value) {
   if (/client does not exist|not enabled for consumers|invalid_client/i.test(raw)) {
     return "Outlook client_id 和 refresh_token 不匹配，或这个 client_id 不支持个人微软邮箱。请换同一套生成出的 client_id/refresh_token。";
   }
+  if (/interaction_required|consent_required|login_required|authorization_pending|AADSTS65001|AADSTS50076|AADSTS50078/i.test(raw)) {
+    return "Outlook 这套 OAuth 凭证需要重新授权。现有四段资料还在，但微软要求重新完成授权确认。";
+  }
+  if (/(insufficient_scope|IMAP\.AccessAsUser\.All|Mail\.Read)/i.test(raw) && /(scope|graph|imap|oauth|token failed|permission|forbidden)/i.test(raw)) {
+    return "Outlook 当前凭证缺少收信权限。请重新生成带 Graph Mail.Read / IMAP.AccessAsUser.All 权限的 OAuth 凭证。";
+  }
   if (/invalid_grant|expired|revoked/i.test(raw)) {
     return "Outlook refresh_token 已过期或被撤销。需要重新生成并导入新的 Outlook 凭证。";
   }
@@ -692,6 +701,8 @@ const MAIL_ERROR_LABELS = {
   outlook_credential_format: "Outlook 凭证格式错误",
   outlook_client_mismatch: "Outlook client_id 不匹配",
   outlook_refresh_expired: "Outlook RT 过期",
+  outlook_reauth_required: "Outlook 需要重新授权",
+  outlook_scope_missing: "Outlook 权限不足",
   graph_token_failed: "Graph 授权失败",
   imap_token_failed: "IMAP 授权失败",
   graph_fetch_failed: "Graph 收信失败",
@@ -805,6 +816,12 @@ function sortableTime(value) {
 
 function sortAccounts(accounts) {
   return mailboxAccountModel.sortAccounts(accounts);
+}
+
+function dedupeAccounts(accounts) {
+  return mailboxAccountModel.dedupeAccounts
+    ? mailboxAccountModel.dedupeAccounts(accounts)
+    : sortAccounts(accounts);
 }
 
 function applyImportBatch(rows, importedAt = new Date().toISOString()) {
@@ -1136,6 +1153,7 @@ mailboxWorkspace = window.GAM?.mailboxWorkspace?.createMailboxWorkspace?.({
     applyMailboxControlsState,
     loadServerMessages,
     sortAccounts,
+    dedupeAccounts,
     preferRealSecret,
     accountCategoryOptionsBase,
   },
@@ -2891,9 +2909,6 @@ function upsertAccounts(incoming) {
   let imported = 0;
   let updated = 0;
   incoming.forEach((account) => {
-    if (account.source === "temp" && account.email) {
-      byId.delete(`microsoft:${account.email.toLowerCase()}`);
-    }
     const existing = byId.get(account.id);
     const now = new Date().toISOString();
     if (existing) {
@@ -2913,7 +2928,7 @@ function upsertAccounts(incoming) {
     state.selected.add(account.id);
     if (account.category) ensureCategory(account.category);
   });
-  state.accounts = sortAccounts(byId.values());
+  state.accounts = dedupeAccounts(byId.values());
   invalidateFilteredAccountsCache();
   saveJson(STORAGE_KEYS.accounts, state.accounts);
   saveJson(STORAGE_KEYS.categories, state.categories);
@@ -3163,7 +3178,7 @@ async function syncMail() {
   }
   const provider = normalizeProviderValue(els.providerFilter?.value);
   if (els.providerFilter && provider !== "auto") {
-    addClientLog(`当前优先使用 ${provider === "graph" ? "Graph" : "IMAP"}；失败时会继续尝试其他微软收信通道。`, "info");
+    addClientLog(`当前固定使用 ${provider === "graph" ? "Graph" : "IMAP"} 模式。`, "info");
   }
   if (payloadHasMaskedCredentials(payload) && !hasUsableLocalCredentialsForPayload(payload) && !payload.emails.length) {
     toast(localCredentialHint());
@@ -3203,7 +3218,7 @@ async function syncMail() {
     const errors = [
       ...(data.errors || []),
       ...(data.results || []).flatMap((result) => result.ok ? [] : [
-        result.error_label || result.error_code || result.error || (result.errors || [])[0],
+        result.error_hint || result.error_label || result.error_code || result.error || (result.errors || [])[0],
       ]),
     ].map(humanizeMailError).filter(Boolean);
     const summary = data.summary || {};

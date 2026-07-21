@@ -1,0 +1,94 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>GPT账号管理助手 - 插件中心</title>
+  <link rel="stylesheet" href="/styles.css?v={{APP_VERSION}}">
+  <link rel="stylesheet" href="/forge-theme.css?v={{APP_VERSION}}">
+  <script src="/shared/app-shell.js?v={{APP_VERSION}}" defer></script>
+  <script src="/nav-links.js?v={{APP_VERSION}}" defer></script>
+  <script src="/i18n.js?v={{APP_VERSION}}" defer></script>
+</head>
+<body data-app-section="core" data-app-current="plugins">
+  <div class="shell plugin-shell">
+    <header class="topbar app-header">
+      <a class="brand" href="/" aria-label="GPT账号管理助手">
+        <span class="brand-mark" aria-hidden="true">
+          <svg viewBox="0 0 24 24" width="23" height="23">
+            <path d="M12 3 3.5 7.4 12 12l8.5-4.6L12 3Z"></path>
+            <path d="m4 12 8 4.3 8-4.3"></path>
+            <path d="m4 16.5 8 4.3 8-4.3"></path>
+          </svg>
+        </span>
+        <span class="brand-copy">
+          <strong>GPT账号管理助手</strong>
+          <em>主线聚焦 / 工具分层 / 运维插件</em>
+        </span>
+      </a>
+      <nav class="topnav" aria-label="顶部导航">
+        <a class="github-link" href="https://github.com/margetrp-hub/gpt-account-manager" target="_blank" rel="noreferrer" aria-label="GitHub 开源项目">GitHub</a>
+      </nav>
+    </header>
+
+    <nav class="module-tabs" aria-label="功能导航" data-app-nav></nav>
+
+    <main class="plugin-layout">
+      <section class="panel plugin-hero">
+        <div>
+          <p class="eyebrow">Plugin Center</p>
+          <h1>插件中心</h1>
+          <p>把非主线工具收进同一个入口，主线聚焦收件、邮箱资产、订阅判断和 CPA 仓管。</p>
+        </div>
+        <div class="plugin-hero-note">
+          <strong>说明</strong>
+          <span>这里保留原有能力入口，只做产品分层，不移除现有功能。</span>
+        </div>
+      </section>
+
+      <section class="plugin-grid" aria-label="插件入口">
+        <a class="plugin-card" href="/refresh.html">
+          <span>↻</span>
+          <strong>凭证刷新</strong>
+          <em>批量登录、接码、生成 auth_file</em>
+        </a>
+        <a class="plugin-card" href="/converter.html">
+          <span>⇄</span>
+          <strong>Session 转换</strong>
+          <em>本地转换 CPA / sub2 / 其它格式</em>
+        </a>
+        <a class="plugin-card" href="/cdk.html">
+          <span>⌘</span>
+          <strong>CDK 取码</strong>
+          <em>独立插件入口，适合单独绑域名和独立部署</em>
+        </a>
+        <a class="plugin-card" href="/api.html">
+          <span>⌗</span>
+          <strong>API 文档</strong>
+          <em>工作区、邮件缓存、验证码读取和管理员接口说明</em>
+        </a>
+        <a class="plugin-card" href="/dashboard.html">
+          <span>▣</span>
+          <strong>仪表盘</strong>
+          <em>封禁趋势、缓存统计、风险摘要</em>
+        </a>
+        <a class="plugin-card" href="/recover.html">
+          <span>⌂</span>
+          <strong>工作区找回</strong>
+          <em>导出、导入、密码找回、恢复工作区</em>
+        </a>
+        <a class="plugin-card" href="/health.html">
+          <span>⌁</span>
+          <strong>部署自检</strong>
+          <em>运行状态、网络、端口和基础连通性检查</em>
+        </a>
+        <a class="plugin-card" href="/admin.html">
+          <span>⌗</span>
+          <strong>管理员提取器</strong>
+          <em>管理辅助工具，保留原入口不并入主线</em>
+        </a>
+      </section>
+    </main>
+  </div>
+</body>
+</html>

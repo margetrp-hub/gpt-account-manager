@@ -47,16 +47,10 @@
     messageSourceRank: document.querySelector("#messageSourceRank"),
   };
 
-  function getWorkspaceId() {
-    if (base?.getWorkspaceId) return base.getWorkspaceId(STORAGE_KEYS.workspaceId);
-    const existing = localStorage.getItem(STORAGE_KEYS.workspaceId) || "";
-    if (/^[A-Za-z0-9][A-Za-z0-9_.-]{5,63}$/.test(existing)) return existing;
-    const next = `ws_${crypto.randomUUID().replace(/-/g, "")}`;
-    localStorage.setItem(STORAGE_KEYS.workspaceId, next);
-    return next;
-  }
-
-  const workspaceId = getWorkspaceId();
+  const workspaceId = base?.resolveWorkspaceId?.(STORAGE_KEYS.workspaceId)
+    || base?.getWorkspaceId?.(STORAGE_KEYS.workspaceId)
+    || localStorage.getItem(STORAGE_KEYS.workspaceId)
+    || `ws_${crypto.randomUUID().replace(/-/g, "")}`;
 
   function rememberedAdminToken() {
     return base?.rememberedAdminToken?.(authQueryToken) || authQueryToken || localStorage.getItem("ctgptm.admin.toolToken") || "";

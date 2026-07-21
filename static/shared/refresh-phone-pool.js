@@ -34,8 +34,13 @@
       const seen = new Set();
       return value.map((item) => {
         const phone = String(item?.phone || "").trim();
+        const provider = normalizePhoneProvider(item?.provider || item?.phone_provider);
         const apiUrl = String(item?.api_url || item?.apiUrl || "").trim();
-        if (!phone || !apiUrl) return null;
+        const apiKey = String(item?.api_key || item?.apiKey || item?.phone_api_key || "").trim();
+        const activationId = String(item?.activation_id || item?.activationId || item?.phone_activation_id || "").trim();
+        const endpoint = String(item?.endpoint || item?.provider_endpoint || item?.phone_provider_endpoint || "").trim();
+        const validSource = provider === "custom" ? validPhoneApiUrl(apiUrl) : Boolean(apiKey && activationId);
+        if (!phone || !validSource) return null;
         const id = String(item?.id || `phone:${phone.toLowerCase()}`);
         const key = id.toLowerCase();
         if (seen.has(key)) return null;
@@ -44,7 +49,11 @@
           id,
           mode: item?.mode === "bound" || item?.mode === "one_to_one" ? "bound" : "batch",
           phone,
+          provider,
           api_url: apiUrl,
+          api_key: apiKey,
+          activation_id: activationId,
+          endpoint,
           account_email: String(item?.account_email || item?.accountEmail || "").trim().toLowerCase(),
           last_code: String(item?.last_code || item?.lastCode || ""),
           last_message: String(item?.last_message || item?.lastMessage || ""),
@@ -55,7 +64,7 @@
     }
 
     function phoneCodeForRow(row, entry = null) {
-      return String(row?.manual_phone_code || row?.phone_code || entry?.last_code || "").trim();
+      return String(row?.manual_phone_code || row?.phone_code || "").trim();
     }
 
     function phonePoolPayload() {
@@ -63,7 +72,11 @@
         id: item.id,
         mode: item.mode,
         phone: item.phone,
+        provider: item.provider,
         api_url: item.api_url,
+        api_key: item.api_key,
+        activation_id: item.activation_id,
+        endpoint: item.endpoint,
         account_email: item.account_email || "",
       }));
     }
@@ -94,6 +107,10 @@
       row.phone_id = entry.id;
       row.phone_number = entry.phone;
       row.phone_api_url = entry.api_url;
+      row.phone_provider = entry.provider;
+      row.phone_api_key = entry.api_key;
+      row.phone_activation_id = entry.activation_id;
+      row.phone_provider_endpoint = entry.endpoint;
       saveQueue();
       return entry;
     }
@@ -107,6 +124,26 @@
         minute: "2-digit",
         second: "2-digit",
       });
+    }
+
+    function normalizePhoneProvider(value) {
+      const provider = String(value || "").trim().toLowerCase().replace(/[^a-z0-9]+/g, "");
+      if (["herosms", "hero"].includes(provider)) return "herosms";
+      if (["smsbower", "bower"].includes(provider)) return "smsbower";
+      return "custom";
+    }
+
+    function phoneProviderLabel(provider) {
+      if (provider === "herosms") return "HeroSMS";
+      if (provider === "smsbower") return "SMSBower";
+      return "自定义 API";
+    }
+
+    function phoneProviderSummary(item) {
+      if (item.provider === "custom") return phoneProviderLabel(item.provider);
+      const activation = String(item.activation_id || "");
+      const suffix = activation ? ` #${activation.slice(-4)}` : "";
+      return `${phoneProviderLabel(item.provider)}${suffix}`;
     }
 
     function renderPhoneBindingList() {
@@ -126,12 +163,12 @@
         const email = item.account_email || "未绑定邮箱";
         const hint = item.last_code
           ? `最近验证码 ${item.last_code}${item.last_checked_at ? ` · ${formatPhoneTime(item.last_checked_at)}` : ""}`
-          : (item.status === "error" ? "取码失败" : "等待取码");
+          : (item.status === "running" ? "正在取码" : (item.status === "error" ? "取码失败" : "等待取码"));
         return `
           <div class="phone-binding-row">
             <strong>${escapeHtml(item.phone)}</strong>
             <span>${escapeHtml(email)}</span>
-            <em>${escapeHtml(mode)} · ${escapeHtml(hint)}</em>
+            <em>${escapeHtml(mode)} · ${escapeHtml(phoneProviderSummary(item))} · ${escapeHtml(hint)}</em>
           </div>
         `;
       }).join("");
@@ -148,18 +185,18 @@
       els.phonePoolList.innerHTML = state.phonePool.map((item) => {
         const status = item.last_code
           ? `最近验证码 ${item.last_code}${item.last_checked_at ? ` · ${formatPhoneTime(item.last_checked_at)}` : ""}`
-          : (item.status === "error" ? "取码失败" : "等待取码");
+          : (item.status === "running" ? "正在取码" : (item.status === "error" ? "取码失败" : "等待取码"));
         const mode = item.mode === "bound" ? "1对1" : "批量";
         const bound = item.account_email ? item.account_email : "未绑定账号";
         return `
           <div class="phone-pool-row" data-id="${escapeHtml(item.id)}">
             <div>
               <strong>${escapeHtml(item.phone)}</strong>
-              <em>${escapeHtml(mode)} · ${escapeHtml(bound)} · ${escapeHtml(status)}</em>
+              <em>${escapeHtml(mode)} · ${escapeHtml(phoneProviderSummary(item))} · ${escapeHtml(bound)} · ${escapeHtml(status)}</em>
             </div>
             <div class="phone-pool-actions">
               <button class="bind-phone" type="button">绑定选中</button>
-              <button class="poll-phone" type="button">取码</button>
+              <button class="poll-phone" type="button"${item.polling ? " disabled" : ""}>${item.polling ? "取码中" : "取码"}</button>
               <button class="remove-phone danger" type="button">删除</button>
             </div>
           </div>
@@ -183,15 +220,55 @@
       }
     }
 
+    function currentPhoneProvider() {
+      return normalizePhoneProvider(els.phoneProvider?.value);
+    }
+
+    function validPhoneProviderEndpoint(value) {
+      return !String(value || "").trim() || validPhoneApiUrl(value);
+    }
+
+    function readPhoneProviderFields() {
+      const provider = currentPhoneProvider();
+      const apiUrl = els.phoneApiUrl ? els.phoneApiUrl.value.trim() : "";
+      const apiKey = els.phoneApiKey ? els.phoneApiKey.value.trim() : "";
+      const activationId = els.phoneActivationId ? els.phoneActivationId.value.trim() : "";
+      const endpoint = els.phoneProviderEndpoint ? els.phoneProviderEndpoint.value.trim() : "";
+      if (provider === "custom") {
+        if (!validPhoneApiUrl(apiUrl)) return { error: "请填写有效的接码 API URL" };
+      } else if (!apiKey || !activationId) {
+        return { error: "请填写平台 API Key 和激活订单 ID" };
+      }
+      if (!validPhoneProviderEndpoint(endpoint)) return { error: "自定义平台地址必须是 http/https URL" };
+      return {
+        provider,
+        api_url: apiUrl,
+        api_key: apiKey,
+        activation_id: activationId,
+        endpoint,
+      };
+    }
+
+    function syncPhoneProviderForm() {
+      const provider = currentPhoneProvider();
+      document.querySelectorAll("[data-phone-provider]").forEach((field) => {
+        const type = field.dataset.phoneProvider;
+        field.hidden = (type === "custom") !== (provider === "custom");
+      });
+      if (els.phoneApiUrl) {
+        els.phoneApiUrl.placeholder = "接码 API URL，例如 https://api.example.com/sms?phone={phone}";
+      }
+    }
+
     function addOrUpdatePhoneEntry() {
       const phone = els.phoneNumber ? els.phoneNumber.value.trim() : "";
-      const apiUrl = els.phoneApiUrl ? els.phoneApiUrl.value.trim() : "";
-      if (!phone || !apiUrl) {
-        toast("请填写手机号和接码 API");
+      const providerFields = readPhoneProviderFields();
+      if (!phone) {
+        toast("请填写手机号");
         return;
       }
-      if (!validPhoneApiUrl(apiUrl)) {
-        toast("接码 API 必须是 http/https URL");
+      if (providerFields.error) {
+        toast(providerFields.error);
         addLog("手机 API 格式错误", "error", { error_code: "phone_pool_api_invalid" });
         return;
       }
@@ -212,7 +289,7 @@
         id,
         mode: accountEmail ? "bound" : "batch",
         phone,
-        api_url: apiUrl,
+        ...providerFields,
         account_email: accountEmail || existing?.account_email || "",
         status: existing?.status || "idle",
         last_code: existing?.last_code || "",
@@ -241,9 +318,32 @@
       text.split(/\r?\n/).forEach((line, index) => {
         const raw = line.trim();
         if (!raw) return;
-        const parts = raw.split(/----|\t|,/).map((part) => part.trim()).filter(Boolean);
-        const [phone, apiUrl, email = ""] = parts;
-        if (!phone || !apiUrl || !validPhoneApiUrl(apiUrl)) {
+        const parts = raw.split(/----|\t|,/).map((part) => part.trim());
+        const phone = parts[0] || "";
+        const requestedProvider = normalizePhoneProvider(parts[1]);
+        const explicitProvider = /^(?:custom|api|url|hero(?:sms)?|smsbower|bower)$/i.test(parts[1] || "");
+        let providerFields;
+        let email = "";
+        if (!explicitProvider) {
+          providerFields = { provider: "custom", api_url: parts[1] || "", api_key: "", activation_id: "", endpoint: "" };
+          email = parts[2] || "";
+        } else if (requestedProvider === "custom") {
+          providerFields = { provider: "custom", api_url: parts[2] || "", api_key: "", activation_id: "", endpoint: "" };
+          email = parts[3] || "";
+        } else {
+          providerFields = {
+            provider: requestedProvider,
+            api_url: "",
+            api_key: parts[2] || "",
+            activation_id: parts[3] || "",
+            endpoint: parts[5] || "",
+          };
+          email = parts[4] || "";
+        }
+        const validSource = providerFields.provider === "custom"
+          ? validPhoneApiUrl(providerFields.api_url)
+          : Boolean(providerFields.api_key && providerFields.activation_id && validPhoneProviderEndpoint(providerFields.endpoint));
+        if (!phone || !validSource) {
           errors.push(index + 1);
           return;
         }
@@ -254,7 +354,7 @@
           id,
           mode: email ? "bound" : "batch",
           phone,
-          api_url: apiUrl,
+          ...providerFields,
           account_email: accountEmailKey(email),
           status: existing?.status || "idle",
           last_code: existing?.last_code || "",
@@ -295,6 +395,10 @@
       row.phone_id = item.id;
       row.phone_number = item.phone;
       row.phone_api_url = item.api_url;
+      row.phone_provider = item.provider;
+      row.phone_api_key = item.api_key;
+      row.phone_activation_id = item.activation_id;
+      row.phone_provider_endpoint = item.endpoint;
       savePhonePool();
       saveQueue();
       renderAll();
@@ -311,6 +415,10 @@
           delete row.phone_id;
           delete row.phone_number;
           delete row.phone_api_url;
+          delete row.phone_provider;
+          delete row.phone_api_key;
+          delete row.phone_activation_id;
+          delete row.phone_provider_endpoint;
         }
       });
       savePhonePool();
@@ -320,14 +428,17 @@
       renderSelectedPhoneCodePanel();
     }
 
-    async function pollPhoneEntry(phoneId, rowId = "") {
+    async function pollPhoneEntry(phoneId, rowId = "", options = {}) {
       const item = state.phonePool.find((entry) => entry.id === phoneId);
-      if (!item) return;
+      if (!item) return { skipped: true };
+      if (item.polling) return { skipped: true };
+      const quiet = Boolean(options.quiet);
       const targetRow = state.queue.find((row) => row.id === rowId) || state.queue.find((row) => (
         row.phone_id === item.id
         || phoneMatches(item.phone, row.phone_number)
         || accountEmailKey(row.email || row.name) === accountEmailKey(item.account_email)
       ));
+      item.polling = true;
       item.status = "running";
       savePhonePool();
       renderPhonePool();
@@ -337,7 +448,11 @@
           headers: apiHeaders(),
           body: JSON.stringify({
             phone: item.phone,
+            provider: item.provider,
             api_url: item.api_url,
+            api_key: item.api_key,
+            activation_id: item.activation_id,
+            endpoint: item.endpoint,
             account_email: targetRow?.email || item.account_email,
             since: item.last_checked_at || "",
           }),
@@ -351,6 +466,10 @@
           targetRow.phone_id = item.id;
           targetRow.phone_number = item.phone;
           targetRow.phone_api_url = item.api_url;
+          targetRow.phone_provider = item.provider;
+          targetRow.phone_api_key = item.api_key;
+          targetRow.phone_activation_id = item.activation_id;
+          targetRow.phone_provider_endpoint = item.endpoint;
           targetRow.phone_code = data.code ? String(data.code) : targetRow.phone_code || "";
           targetRow.phone_code_message = data.message || "";
           targetRow.phone_code_checked_at = data.checked_at || new Date().toISOString();
@@ -361,12 +480,17 @@
         renderPhonePool();
         renderQueue();
         if (data.found) {
-          addLog(`${item.account_email || item.phone} 手机验证码：${data.code}`, "success", { step: "phone_code", email: item.account_email });
-          toast(`收到手机验证码 ${data.code}`);
+          if (!quiet) {
+            addLog(`${item.account_email || item.phone} 手机验证码：${data.code}`, "success", { step: "phone_code", email: item.account_email });
+            toast(`收到手机验证码 ${data.code}`);
+          }
         } else {
-          addLog(`${item.account_email || item.phone} 暂未收到手机验证码`, "warning", { error_code: "phone_code_missing", email: item.account_email });
-          toast("暂未收到手机验证码");
+          if (!quiet) {
+            addLog(`${item.account_email || item.phone} 暂未收到手机验证码`, "warning", { error_code: "phone_code_missing", email: item.account_email });
+            toast("暂未收到手机验证码");
+          }
         }
+        return { found: Boolean(data.found), data };
       } catch (error) {
         const details = error.details || { error: error.message || "手机取码失败", error_code: "phone_code_fetch_failed" };
         item.status = "error";
@@ -374,11 +498,18 @@
         item.last_checked_at = new Date().toISOString();
         savePhonePool();
         renderPhonePool();
-        addLog(`${item.account_email || item.phone} 手机取码失败`, "error", {
-          error_code: details.error_code || "phone_code_fetch_failed",
-          email: item.account_email,
-        });
-        toast(details.error || "手机取码失败");
+        if (!quiet) {
+          addLog(`${item.account_email || item.phone} 手机取码失败`, "error", {
+            error_code: details.error_code || "phone_code_fetch_failed",
+            email: item.account_email,
+          });
+          toast(details.error || "手机取码失败");
+        }
+        return { found: false, error: details };
+      } finally {
+        delete item.polling;
+        savePhonePool();
+        renderPhonePool();
       }
     }
 
@@ -416,6 +547,7 @@
       renderPhoneBindingList,
       renderPhonePool,
       validPhoneApiUrl,
+      syncPhoneProviderForm,
       addOrUpdatePhoneEntry,
       importPhoneBatchEntries,
       bindPhoneToSelected,

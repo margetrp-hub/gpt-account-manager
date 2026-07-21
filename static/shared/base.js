@@ -3,6 +3,36 @@
   const DEFAULT_WORKSPACE_KEY = "ctgptm.workspaceId";
   const DEFAULT_ADMIN_TOKEN_KEY = "ctgptm.admin.toolToken";
   const DEFAULT_WORKSPACE_HISTORY_KEY = "ctgptm.workspaceHistory";
+  const WORKSPACE_SCOPED_PREFIXES = Object.freeze({
+    accountRecords: "ctgptm.account.records:",
+    accountSettings: "ctgptm.account.settings:",
+    mailAccounts: "ctgptm.mail.accounts:",
+    mailCategories: "ctgptm.mail.categories:",
+    mailMessages: "ctgptm.mail.messages:",
+    ignoredMessages: "ctgptm.mail.ignoredMessages:",
+    refreshQueue: "ctgptm.mail.refreshQueue:",
+    abnormalRows: "ctgptm.mail.abnormalRows:",
+    mailboxControlsCollapsed: "ctgptm.mail.mailboxControlsCollapsed.v2:",
+    refreshSettings: "ctgptm.mail.refreshSettings:",
+    phonePool: "ctgptm.mail.phonePool:",
+    cpaSettings: "ctgptm.mail.cpaSettings:",
+    tempSettings: "ctgptm.mail.tempSettings:",
+    cpaWarehouseSettings: "ctgptm.cpaWarehouse.settings:",
+  });
+  const LEGACY_SHARED_KEYS = Object.freeze({
+    workspace: DEFAULT_WORKSPACE_KEY,
+    workspaceHistory: DEFAULT_WORKSPACE_HISTORY_KEY,
+    adminToken: DEFAULT_ADMIN_TOKEN_KEY,
+    legacyMailAccounts: "ctgptm.mail.accounts",
+    legacyMailCategories: "ctgptm.mail.categories",
+    legacyIgnoredMessages: "ctgptm.mail.ignoredMessages",
+    legacyRefreshQueue: "ctgptm.mail.refreshQueue",
+    legacyAbnormalRows: "ctgptm.mail.abnormalRows",
+    legacyPhonePool: "ctgptm.mail.phonePool",
+    legacyCpaSettings: "ctgptm.mail.cpaSettings",
+    legacyTempSettings: "ctgptm.mail.tempSettings",
+    legacyCpaWarehouseSettings: "ctgptm-cpa-warehouse-settings",
+  });
 
   function loadWorkspaceHistory(storageKey = DEFAULT_WORKSPACE_HISTORY_KEY) {
     try {
@@ -92,9 +122,15 @@
     return rememberWorkspaceId(next, { currentStorageKey: storageKey });
   }
 
+  function workspaceScopedKey(prefix, workspaceId) {
+    const cleanPrefix = String(prefix || "");
+    const resolvedWorkspaceId = workspaceId || resolveWorkspaceId(DEFAULT_WORKSPACE_KEY);
+    return `${cleanPrefix}${resolvedWorkspaceId}`;
+  }
+
   function apiHeaders(options = {}) {
     const workspaceStorageKey = options.workspaceStorageKey || DEFAULT_WORKSPACE_KEY;
-    const workspaceId = options.workspaceId || getWorkspaceId(workspaceStorageKey);
+    const workspaceId = options.workspaceId || resolveWorkspaceId(workspaceStorageKey);
     const token = rememberedAdminToken(options.token || "", { storageKey: options.adminTokenStorageKey });
     const headers = { "X-Workspace-Id": workspaceId };
     if (options.includeContentType !== false) {
@@ -166,6 +202,15 @@
     } catch {
       return fallback;
     }
+  }
+
+  function loadScopedJson(scopedKey, legacyKey, fallback, options = {}) {
+    const sentinel = { __missing__: true };
+    const scoped = loadJson(scopedKey, sentinel, options);
+    if (scoped !== sentinel) return scoped;
+    if (!legacyKey) return fallback;
+    const legacy = loadJson(legacyKey, sentinel, options);
+    return legacy !== sentinel ? legacy : fallback;
   }
 
   function saveJson(key, value, options = {}) {
@@ -273,7 +318,11 @@
     apiHeaders,
     migrateLegacyStorageKeys,
     resolveWorkspaceId,
+    workspaceScopedKey,
+    WORKSPACE_SCOPED_PREFIXES,
+    LEGACY_SHARED_KEYS,
     loadJson,
+    loadScopedJson,
     saveJson,
     createPendingSaveScheduler,
     readJsonResponse,

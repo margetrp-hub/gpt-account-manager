@@ -6,10 +6,11 @@
   <title>GPT账号管理助手 - 工作区找回</title>
   <link rel="stylesheet" href="/styles.css?v={{APP_VERSION}}">
   <link rel="stylesheet" href="/forge-theme.css?v={{APP_VERSION}}">
+  <script src="/shared/app-shell.js?v={{APP_VERSION}}" defer></script>
   <script src="/shared/base.js?v={{APP_VERSION}}" defer></script>
   <script src="/recover.js?v={{APP_VERSION}}" defer></script>
 </head>
-<body>
+<body data-app-section="plugin" data-app-current="recover">
   <main class="recover-page">
     <section class="panel recover-card">
       <div class="recover-head">
@@ -22,26 +23,64 @@
             </svg>
           </span>
           <span class="brand-copy">
-            <strong>工作区找回</strong>
-            <em>页面打不开、数据为空、切错空间时使用</em>
+            <strong>工作区保险箱</strong>
+            <em>设置恢复密码，也可以导出 / 导入备份</em>
           </span>
         </a>
         <span class="recover-version">v{{APP_VERSION}}</span>
       </div>
+
+      <nav class="module-tabs" aria-label="功能导航" data-app-nav></nav>
+      <nav class="plugin-tabs" aria-label="插件导航" data-plugin-nav></nav>
 
       <div class="recover-current">
         <span>当前浏览器工作区</span>
         <strong id="currentWorkspace">-</strong>
       </div>
 
-      <div class="recover-tools">
-        <label>
-          <span>手动输入工作区 ID</span>
-          <input id="workspaceInput" autocomplete="off" placeholder="ws_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx">
-        </label>
-        <button id="checkWorkspaceBtn" class="primary" type="button">检查</button>
-        <button id="adminListBtn" type="button">管理员列出服务器工作区</button>
-      </div>
+      <section class="recover-vault" aria-labelledby="workspacePasswordTitle">
+        <div>
+          <h2 id="workspacePasswordTitle">给当前工作区设置恢复密码</h2>
+          <p>设置后，即使换浏览器或本地缓存丢失，也可以用这个密码从服务器找回自己的工作区。服务器只保存密码哈希，不保存明文。</p>
+        </div>
+        <div class="recover-vault-grid">
+          <label>
+            <span>工作区密码</span>
+            <input id="workspacePassword" type="password" autocomplete="new-password" placeholder="至少 6 位">
+          </label>
+          <label>
+            <span>密码提示（可选）</span>
+            <input id="workspacePasswordHint" autocomplete="off" placeholder="只写自己能看懂的提示">
+          </label>
+          <button id="saveWorkspacePasswordBtn" class="primary" type="button">保存密码</button>
+        </div>
+      </section>
+
+      <section class="recover-vault" aria-labelledby="recoverByPasswordTitle">
+        <div>
+          <h2 id="recoverByPasswordTitle">用工作区密码找回</h2>
+          <p>如果当前浏览器看不到原来的邮箱和邮件，在这里输入之前设置的工作区密码，找到后可以一键切换回去。</p>
+        </div>
+        <div class="recover-vault-grid recover-vault-grid-short">
+          <label>
+            <span>工作区密码</span>
+            <input id="recoverPassword" type="password" autocomplete="current-password" placeholder="输入之前设置的密码">
+          </label>
+          <button id="recoverByPasswordBtn" class="primary" type="button">找回工作区</button>
+        </div>
+      </section>
+
+      <details class="recover-advanced">
+        <summary>高级：按工作区 ID 检查</summary>
+        <div class="recover-tools">
+          <label>
+            <span>手动输入工作区 ID</span>
+            <input id="workspaceInput" autocomplete="off" placeholder="ws_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx">
+          </label>
+          <button id="checkWorkspaceBtn" class="primary" type="button">检查</button>
+          <button id="adminListBtn" type="button">管理员列出服务器工作区</button>
+        </div>
+      </details>
 
       <p id="recoverStatus" class="recover-status">正在读取本机浏览器历史工作区。</p>
 
@@ -50,7 +89,7 @@
       <section class="recover-backup" aria-labelledby="recoverBackupTitle">
         <div>
           <h2 id="recoverBackupTitle">备份 / 恢复当前工作区</h2>
-          <p>导出当前浏览器保存的邮箱资料、分组、刷新队列和页面设置。密码可选，填写后备份文件会加密。</p>
+          <p>这是离线保险：导出当前浏览器保存的邮箱资料、分组、刷新队列和页面设置。密码可选，填写后备份文件会加密。</p>
         </div>
         <div class="recover-backup-grid">
           <label>
@@ -68,7 +107,7 @@
       <div class="recover-actions">
         <a class="github-link" href="/">返回首页</a>
         <a class="github-link" href="/mailboxes.html">邮箱管理</a>
-        <a class="github-link" href="/refresh.html">凭证刷新</a>
+        <a class="github-link" href="/plugins.html">插件中心</a>
       </div>
     </section>
   </main>

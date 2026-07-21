@@ -1,0 +1,95 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>GPT账号管理助手 - CDK 取码</title>
+  <link rel="stylesheet" href="/styles.css?v={{APP_VERSION}}">
+  <link rel="stylesheet" href="/forge-theme.css?v={{APP_VERSION}}">
+  <script src="/shared/app-shell.js?v={{APP_VERSION}}" defer></script>
+  <script src="/nav-links.js?v={{APP_VERSION}}" defer></script>
+  <script src="/i18n.js?v={{APP_VERSION}}" defer></script>
+  <script src="/cdk.js?v={{APP_VERSION}}" defer></script>
+</head>
+<body data-app-section="plugin" data-app-current="cdk">
+  <div class="shell plugin-shell">
+    <header class="topbar app-header">
+      <a class="brand" href="/" aria-label="GPT账号管理助手">
+        <span class="brand-mark" aria-hidden="true">
+          <svg viewBox="0 0 24 24" width="23" height="23">
+            <path d="M12 3 3.5 7.4 12 12l8.5-4.6L12 3Z"></path>
+            <path d="m4 12 8 4.3 8-4.3"></path>
+            <path d="m4 16.5 8 4.3 8-4.3"></path>
+          </svg>
+        </span>
+        <span class="brand-copy">
+          <strong>GPT账号管理助手</strong>
+          <em>CDK 插件 / 独立入口 / 单独绑域名</em>
+        </span>
+      </a>
+      <nav class="topnav" aria-label="顶部导航">
+        <a class="github-link" href="https://github.com/margetrp-hub/gpt-account-manager" target="_blank" rel="noreferrer">GitHub</a>
+      </nav>
+    </header>
+
+    <nav class="module-tabs" aria-label="功能导航" data-app-nav></nav>
+    <nav class="plugin-tabs" aria-label="插件导航" data-plugin-nav></nav>
+
+    <main class="plugin-layout">
+      <section class="panel plugin-hero">
+        <div>
+          <p class="eyebrow">CDK Plugin</p>
+          <h1>CDK 取码 / 兑换页</h1>
+          <p>这个页面预留给独立 CDK 服务。适合单独绑域名，对外只暴露 CDK 兑换和查询，不和主线收件箱混在一起。</p>
+        </div>
+        <div class="plugin-hero-note">
+          <strong>定位</strong>
+          <span>插件独立部署，主项目只保留入口和边界说明。</span>
+        </div>
+      </section>
+
+      <section class="panel plugin-grid" aria-label="CDK 插件信息">
+        <label class="plugin-config-card">
+          <span>CDK 服务地址</span>
+          <input id="cdkBaseUrl" placeholder="默认 http://127.0.0.1:8788">
+          <em>后续独立给域名时，直接改成你的正式域名。</em>
+        </label>
+      </section>
+
+      <section class="plugin-grid" aria-label="CDK 插件入口">
+        <a class="plugin-card" id="cdkTaskLink" href="#">
+          <span>⌘</span>
+          <strong>用户任务页</strong>
+          <em>独立用户任务大厅，对应 `cdk-task-center` 的 `/`。</em>
+        </a>
+        <a class="plugin-card" id="cdkRedeemLink" href="#">
+          <span>⌘</span>
+          <strong>CDK 兑换页</strong>
+          <em>独立兑换入口，对应 `cdk-task-center` 的 `/redeem.html`。</em>
+        </a>
+        <a class="plugin-card" id="cdkAdminLink" href="#">
+          <span>⌗</span>
+          <strong>管理员页</strong>
+          <em>独立后台，对应 `cdk-task-center` 的 `/admin.html`。</em>
+        </a>
+        <a class="plugin-card" id="cdkHealthLink" href="#">
+          <span>⌁</span>
+          <strong>健康检查</strong>
+          <em>独立服务探针，对应 `cdk-task-center` 的 `/healthz`。</em>
+        </a>
+        <article class="plugin-card">
+          <span>⌁</span>
+          <strong>独立 API</strong>
+          <em>CDK 服务建议维持独立 API、独立任务状态和独立管理面，不直接耦合主线工作区数据。</em>
+        </article>
+        <article class="plugin-card">
+          <span>⇄</span>
+          <strong>对接方式</strong>
+          <em>主项目通过插件中心挂入口；如果后续需要，只做 URL 级跳转或结果级回调，不混状态机。</em>
+        </article>
+      </section>
+    </main>
+  </div>
+  <div id="toast" class="toast" role="status" aria-live="polite"></div>
+</body>
+</html>

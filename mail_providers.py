@@ -33,6 +33,8 @@ MAIL_FETCH_ERROR_LABELS = {
     "outlook_credential_format": "Outlook 凭证格式错误",
     "outlook_client_mismatch": "Outlook client_id 不匹配",
     "outlook_refresh_expired": "Outlook RT 过期",
+    "outlook_reauth_required": "Outlook 需要重新授权",
+    "outlook_scope_missing": "Outlook 权限不足",
     "graph_token_failed": "Graph 授权失败",
     "imap_token_failed": "IMAP 授权失败",
     "graph_fetch_failed": "Graph 收信失败",
@@ -90,9 +92,11 @@ def infer_generic_mail_config(email_addr: str) -> dict[str, Any]:
 def microsoft_provider_sequence(provider: str) -> list[str]:
     value = (provider or "auto").strip().lower()
     if value == "graph":
-        return ["graph", "imap", "outlook"]
+        return ["graph"]
     if value == "imap":
-        return ["imap", "graph", "outlook"]
+        return ["imap"]
+    if value == "outlook":
+        return ["outlook"]
     return ["imap", "graph", "outlook"]
 
 
@@ -159,6 +163,28 @@ def classify_mail_fetch_error(raw: str, source: str = "") -> dict[str, Any]:
     elif "client does not exist" in lowered or "not enabled for consumers" in lowered or "invalid_client" in lowered:
         code = "outlook_client_mismatch"
         hint = "client_id 与 refresh_token 不是同一套，或这个 client_id 不支持个人微软邮箱。"
+        retryable = False
+    elif any(token in lowered for token in [
+        "interaction_required",
+        "consent_required",
+        "login_required",
+        "authorization_pending",
+        "aadsts65001",
+        "aadsts50076",
+        "aadsts50078",
+    ]):
+        code = "outlook_reauth_required"
+        hint = "这套 Outlook OAuth 凭证需要重新完成微软授权，单靠现有四段资料无法自动恢复。"
+        retryable = False
+    elif any(token in lowered for token in [
+        "insufficient_scope",
+        "mail.read",
+        "imap.accessasuser.all",
+        "permission",
+        "forbidden",
+    ]) and any(token in lowered for token in ["scope", "graph", "imap", "oauth", "token failed"]):
+        code = "outlook_scope_missing"
+        hint = "当前 Outlook 凭证缺少 Graph/IMAP 收信权限；请重新生成带收信权限的 OAuth 凭证。"
         retryable = False
     elif "invalid_grant" in lowered or "expired" in lowered or "revoked" in lowered:
         code = "outlook_refresh_expired"

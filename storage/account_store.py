@@ -6,6 +6,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, TypeVar
 
+from storage.file_lock import atomic_write_json
+
 
 AccountT = TypeVar("AccountT")
 
@@ -27,21 +29,11 @@ def _read_rows(path: Path, list_key: str) -> list[dict[str, Any]]:
 
 
 def _write_rows(path: Path, list_key: str, rows: list[dict[str, Any]]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
     payload = {
         "updated_at": _iso_now(),
         list_key: rows,
     }
-    tmp = path.with_suffix(".json.tmp")
-    try:
-        tmp.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
-        tmp.replace(path)
-    except OSError:
-        try:
-            tmp.unlink(missing_ok=True)
-        except OSError:
-            pass
-        raise
+    atomic_write_json(path, payload)
 
 
 def _load_dataclass_map(

@@ -1,7 +1,8 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import Any, Callable
+import contextlib
+from dataclasses import dataclass, field
+from typing import Any, Callable, ContextManager, Iterator
 
 
 TextCoercer = Callable[[Any], str]
@@ -12,6 +13,13 @@ LoadWorkspaceMap = Callable[[str], dict[str, Any]]
 SaveWorkspaceMap = Callable[[str, dict[str, Any]], None]
 ParseImportRows = Callable[[str], tuple[list[Any], list[str]]]
 AddressExtractor = Callable[[dict[str, Any]], dict[str, Any]]
+WorkspaceLock = Callable[[str], ContextManager[Any]]
+
+
+@contextlib.contextmanager
+def _null_workspace_lock(workspace_id: str) -> Iterator[None]:
+    """默认的无操作锁：单元测试注入假 load/save 时无需真实文件锁。"""
+    yield
 
 
 @dataclass(frozen=True)
@@ -32,6 +40,9 @@ class MailboxWorkspaceService:
     parse_generic_account_lines: ParseImportRows
     normalize_generic_account: Callable[[Any], Any]
     temp_address_from_worker_row: AddressExtractor | None = None
+    # 按 workspace 加锁，把 import/delete/sync 的"读-改-写"整段串行化。
+    # 默认 no-op，方便单元测试注入假 load/save 回调时无需真实锁。
+    workspace_lock: WorkspaceLock = field(default=_null_workspace_lock)
 
     def selected_emails(self, payload: dict[str, Any]) -> list[str]:
         emails = [
@@ -169,228 +180,236 @@ class MailboxWorkspaceService:
 
     def import_pickup_accounts_for_workspace(self, payload: dict[str, Any], workspace_id: str = "public", *, replace_existing: bool = True) -> dict[str, Any]:
         incoming, errors = self.parse_account_lines(str(payload.get("text", "")))
-        accounts = self.load_workspace_accounts(workspace_id)
-        imported = 0
-        updated = 0
-        skipped = 0
-        for account in incoming:
-            key = account.email.lower()
-            existing = accounts.get(key)
-            if existing:
-                if not replace_existing:
-                    skipped += 1
-                    continue
-                account.created_at = existing.created_at
-                updated += 1
-            else:
-                imported += 1
-            accounts[key] = account
-        if imported or updated:
-            self.save_workspace_accounts_state(workspace_id, accounts)
-        return {
-            "success": True,
-            "imported": imported,
-            "updated": updated,
-            "skipped": skipped,
-            "errors": errors,
-            "accounts": [acc.public() for acc in accounts.values()],
-        }
+        with self.workspace_lock(workspace_id):
+            accounts = self.load_workspace_accounts(workspace_id)
+            imported = 0
+            updated = 0
+            skipped = 0
+            for account in incoming:
+                key = account.email.lower()
+                existing = accounts.get(key)
+                if existing:
+                    if not replace_existing:
+                        skipped += 1
+                        continue
+                    account.created_at = existing.created_at
+                    updated += 1
+                else:
+                    imported += 1
+                accounts[key] = account
+            if imported or updated:
+                self.save_workspace_accounts_state(workspace_id, accounts)
+            return {
+                "success": True,
+                "imported": imported,
+                "updated": updated,
+                "skipped": skipped,
+                "errors": errors,
+                "accounts": [acc.public() for acc in accounts.values()],
+            }
 
     def import_temp_addresses_for_workspace(self, payload: dict[str, Any], workspace_id: str = "public", *, replace_existing: bool = True) -> dict[str, Any]:
         incoming, errors = self.parse_temp_address_lines(str(payload.get("text", "")))
-        addresses = self.load_workspace_temp_addresses(workspace_id)
-        imported = 0
-        updated = 0
-        skipped = 0
-        default_base_url = self.normalize_temp_worker_url(
-            self.coerce_text(payload.get("base_url") or payload.get("baseUrl") or self.default_temp_worker_url)
-        )
-        default_site_password = self.coerce_text(payload.get("site_password") or payload.get("sitePassword"))
-        for address in incoming:
-            key = address.email.lower()
-            existing = addresses.get(key)
-            if existing:
-                if not replace_existing:
-                    skipped += 1
-                    continue
-                address.created_at = existing.created_at
-                if not self.usable_secret(address.jwt):
-                    address.jwt = existing.jwt
-                if not address.base_url:
-                    address.base_url = existing.base_url
-                if not address.site_password:
-                    address.site_password = existing.site_password
-                updated += 1
-            else:
-                imported += 1
-            address.base_url = self.normalize_temp_worker_url(address.base_url or default_base_url)
-            address.site_password = address.site_password or default_site_password
-            address.updated_at = self.iso_now()
-            addresses[key] = address
-        if imported or updated:
-            self.save_workspace_temp_addresses_state(workspace_id, addresses)
-        return {
-            "success": True,
-            "imported": imported,
-            "updated": updated,
-            "skipped": skipped,
-            "errors": errors,
-            "addresses": [addr.public() for addr in addresses.values()],
-        }
+        with self.workspace_lock(workspace_id):
+            addresses = self.load_workspace_temp_addresses(workspace_id)
+            imported = 0
+            updated = 0
+            skipped = 0
+            default_base_url = self.normalize_temp_worker_url(
+                self.coerce_text(payload.get("base_url") or payload.get("baseUrl") or self.default_temp_worker_url)
+            )
+            default_site_password = self.coerce_text(payload.get("site_password") or payload.get("sitePassword"))
+            for address in incoming:
+                key = address.email.lower()
+                existing = addresses.get(key)
+                if existing:
+                    if not replace_existing:
+                        skipped += 1
+                        continue
+                    address.created_at = existing.created_at
+                    if not self.usable_secret(address.jwt):
+                        address.jwt = existing.jwt
+                    if not address.base_url:
+                        address.base_url = existing.base_url
+                    if not address.site_password:
+                        address.site_password = existing.site_password
+                    updated += 1
+                else:
+                    imported += 1
+                address.base_url = self.normalize_temp_worker_url(address.base_url or default_base_url)
+                address.site_password = address.site_password or default_site_password
+                address.updated_at = self.iso_now()
+                addresses[key] = address
+            if imported or updated:
+                self.save_workspace_temp_addresses_state(workspace_id, addresses)
+            return {
+                "success": True,
+                "imported": imported,
+                "updated": updated,
+                "skipped": skipped,
+                "errors": errors,
+                "addresses": [addr.public() for addr in addresses.values()],
+            }
 
     def import_generic_accounts_for_workspace(self, payload: dict[str, Any], workspace_id: str = "public", *, replace_existing: bool = True) -> dict[str, Any]:
         incoming, errors = self.parse_generic_account_lines(str(payload.get("text", "")))
-        accounts = self.load_workspace_generic_accounts(workspace_id)
-        imported = 0
-        updated = 0
-        skipped = 0
-        for account in incoming:
-            key = account.email.lower()
-            existing = accounts.get(key)
-            if existing:
-                if not replace_existing:
-                    skipped += 1
-                    continue
-                account.created_at = existing.created_at
-                if not self.usable_secret(account.password):
-                    account.password = existing.password
-                if not account.username:
-                    account.username = existing.username
-                if not account.imap_host:
-                    account.imap_host = existing.imap_host
-                if not account.pop3_host:
-                    account.pop3_host = existing.pop3_host
-                updated += 1
-            else:
-                imported += 1
-            account.updated_at = self.iso_now()
-            accounts[key] = self.normalize_generic_account(account)
-        if imported or updated:
-            self.save_workspace_generic_accounts_state(workspace_id, accounts)
-        return {
-            "success": True,
-            "imported": imported,
-            "updated": updated,
-            "skipped": skipped,
-            "errors": errors,
-            "accounts": [acc.public() for acc in accounts.values()],
-        }
+        with self.workspace_lock(workspace_id):
+            accounts = self.load_workspace_generic_accounts(workspace_id)
+            imported = 0
+            updated = 0
+            skipped = 0
+            for account in incoming:
+                key = account.email.lower()
+                existing = accounts.get(key)
+                if existing:
+                    if not replace_existing:
+                        skipped += 1
+                        continue
+                    account.created_at = existing.created_at
+                    if not self.usable_secret(account.password):
+                        account.password = existing.password
+                    if not account.username:
+                        account.username = existing.username
+                    if not account.imap_host:
+                        account.imap_host = existing.imap_host
+                    if not account.pop3_host:
+                        account.pop3_host = existing.pop3_host
+                    updated += 1
+                else:
+                    imported += 1
+                account.updated_at = self.iso_now()
+                accounts[key] = self.normalize_generic_account(account)
+            if imported or updated:
+                self.save_workspace_generic_accounts_state(workspace_id, accounts)
+            return {
+                "success": True,
+                "imported": imported,
+                "updated": updated,
+                "skipped": skipped,
+                "errors": errors,
+                "accounts": [acc.public() for acc in accounts.values()],
+            }
 
     def delete_workspace_mail_credentials_for_workspace(self, payload: dict[str, Any], workspace_id: str = "public") -> dict[str, Any]:
         unique = self.selected_emails(payload)
-        accounts = self.load_workspace_accounts(workspace_id)
-        addresses = self.load_workspace_temp_addresses(workspace_id)
-        generic_accounts = self.load_workspace_generic_accounts(workspace_id)
-        deleted_microsoft = 0
-        deleted_temp = 0
-        deleted_generic = 0
-        for email_addr in unique:
-            if accounts.pop(email_addr, None) is not None:
-                deleted_microsoft += 1
-            if addresses.pop(email_addr, None) is not None:
-                deleted_temp += 1
-            if generic_accounts.pop(email_addr, None) is not None:
-                deleted_generic += 1
-        if deleted_microsoft:
-            self.save_workspace_accounts_state(workspace_id, accounts)
-        if deleted_temp:
-            self.save_workspace_temp_addresses_state(workspace_id, addresses)
-        if deleted_generic:
-            self.save_workspace_generic_accounts_state(workspace_id, generic_accounts)
-        return {
-            "success": True,
-            "emails": unique,
-            "deleted": {
-                "microsoft": deleted_microsoft,
-                "temp": deleted_temp,
-                "generic": deleted_generic,
-                "total": deleted_microsoft + deleted_temp + deleted_generic,
-            },
-            "accounts": [acc.public() for acc in accounts.values()],
-            "addresses": [addr.public() for addr in addresses.values()],
-            "generic_accounts": [acc.public() for acc in generic_accounts.values()],
-        }
+        with self.workspace_lock(workspace_id):
+            accounts = self.load_workspace_accounts(workspace_id)
+            addresses = self.load_workspace_temp_addresses(workspace_id)
+            generic_accounts = self.load_workspace_generic_accounts(workspace_id)
+            deleted_microsoft = 0
+            deleted_temp = 0
+            deleted_generic = 0
+            for email_addr in unique:
+                if accounts.pop(email_addr, None) is not None:
+                    deleted_microsoft += 1
+                if addresses.pop(email_addr, None) is not None:
+                    deleted_temp += 1
+                if generic_accounts.pop(email_addr, None) is not None:
+                    deleted_generic += 1
+            if deleted_microsoft:
+                self.save_workspace_accounts_state(workspace_id, accounts)
+            if deleted_temp:
+                self.save_workspace_temp_addresses_state(workspace_id, addresses)
+            if deleted_generic:
+                self.save_workspace_generic_accounts_state(workspace_id, generic_accounts)
+            return {
+                "success": True,
+                "emails": unique,
+                "deleted": {
+                    "microsoft": deleted_microsoft,
+                    "temp": deleted_temp,
+                    "generic": deleted_generic,
+                    "total": deleted_microsoft + deleted_temp + deleted_generic,
+                },
+                "accounts": [acc.public() for acc in accounts.values()],
+                "addresses": [addr.public() for addr in addresses.values()],
+                "generic_accounts": [acc.public() for acc in generic_accounts.values()],
+            }
 
     def delete_pickup_accounts_for_workspace(self, payload: dict[str, Any], workspace_id: str = "public") -> dict[str, Any]:
         unique = self.selected_emails(payload)
-        accounts = self.load_workspace_accounts(workspace_id)
-        deleted = 0
-        for email_addr in unique:
-            if accounts.pop(email_addr, None) is not None:
-                deleted += 1
-        if deleted:
-            self.save_workspace_accounts_state(workspace_id, accounts)
-        return {
-            "success": True,
-            "emails": unique,
-            "deleted": deleted,
-            "accounts": [acc.public() for acc in accounts.values()],
-        }
+        with self.workspace_lock(workspace_id):
+            accounts = self.load_workspace_accounts(workspace_id)
+            deleted = 0
+            for email_addr in unique:
+                if accounts.pop(email_addr, None) is not None:
+                    deleted += 1
+            if deleted:
+                self.save_workspace_accounts_state(workspace_id, accounts)
+            return {
+                "success": True,
+                "emails": unique,
+                "deleted": deleted,
+                "accounts": [acc.public() for acc in accounts.values()],
+            }
 
     def delete_temp_addresses_for_workspace(self, payload: dict[str, Any], workspace_id: str = "public") -> dict[str, Any]:
         unique = self.selected_emails(payload)
-        addresses = self.load_workspace_temp_addresses(workspace_id)
-        deleted = 0
-        for email_addr in unique:
-            if addresses.pop(email_addr, None) is not None:
-                deleted += 1
-        if deleted:
-            self.save_workspace_temp_addresses_state(workspace_id, addresses)
-        return {
-            "success": True,
-            "emails": unique,
-            "deleted": deleted,
-            "addresses": [addr.public() for addr in addresses.values()],
-        }
+        with self.workspace_lock(workspace_id):
+            addresses = self.load_workspace_temp_addresses(workspace_id)
+            deleted = 0
+            for email_addr in unique:
+                if addresses.pop(email_addr, None) is not None:
+                    deleted += 1
+            if deleted:
+                self.save_workspace_temp_addresses_state(workspace_id, addresses)
+            return {
+                "success": True,
+                "emails": unique,
+                "deleted": deleted,
+                "addresses": [addr.public() for addr in addresses.values()],
+            }
 
     def delete_generic_accounts_for_workspace(self, payload: dict[str, Any], workspace_id: str = "public") -> dict[str, Any]:
         unique = self.selected_emails(payload)
-        accounts = self.load_workspace_generic_accounts(workspace_id)
-        deleted = 0
-        for email_addr in unique:
-            if accounts.pop(email_addr, None) is not None:
-                deleted += 1
-        if deleted:
-            self.save_workspace_generic_accounts_state(workspace_id, accounts)
-        return {
-            "success": True,
-            "emails": unique,
-            "deleted": deleted,
-            "accounts": [acc.public() for acc in accounts.values()],
-        }
+        with self.workspace_lock(workspace_id):
+            accounts = self.load_workspace_generic_accounts(workspace_id)
+            deleted = 0
+            for email_addr in unique:
+                if accounts.pop(email_addr, None) is not None:
+                    deleted += 1
+            if deleted:
+                self.save_workspace_generic_accounts_state(workspace_id, accounts)
+            return {
+                "success": True,
+                "emails": unique,
+                "deleted": deleted,
+                "accounts": [acc.public() for acc in accounts.values()],
+            }
 
     def sync_temp_jwts_from_worker_result(self, result: dict[str, Any], payload: dict[str, Any], workspace_id: str = "public") -> dict[str, Any]:
         base_url = self.normalize_temp_worker_url(self.coerce_text(payload.get("base_url")).rstrip("/"))
         site_password = self.coerce_text(payload.get("site_password"))
-        addresses = self.load_workspace_temp_addresses(workspace_id)
-        imported = 0
-        updated = 0
-        for item in result.get("results", []):
-            if not isinstance(item, dict) or not item.get("ok") or not self.usable_secret(item.get("jwt")):
-                continue
-            email_addr = self.coerce_text(item.get("address") or item.get("email")).lower()
-            if "@" not in email_addr:
-                continue
-            existing = addresses.get(email_addr)
-            address = self.temp_address_from_worker_row(item) if self.temp_address_from_worker_row else None
-            if address is None:
-                continue
-            address.base_url = base_url
-            address.site_password = site_password
-            address.label = "临时邮箱"
-            address.created_at = existing.created_at if existing else self.iso_now()
-            address.updated_at = self.iso_now()
-            addresses[email_addr] = address
-            if existing:
-                updated += 1
-            else:
-                imported += 1
-        if imported or updated:
-            self.save_workspace_temp_addresses_state(workspace_id, addresses)
-        return {
-            **result,
-            "success": True,
-            "imported": imported,
-            "updated": updated,
-            "addresses": [addr.public() for addr in addresses.values()],
-        }
+        with self.workspace_lock(workspace_id):
+            addresses = self.load_workspace_temp_addresses(workspace_id)
+            imported = 0
+            updated = 0
+            for item in result.get("results", []):
+                if not isinstance(item, dict) or not item.get("ok") or not self.usable_secret(item.get("jwt")):
+                    continue
+                email_addr = self.coerce_text(item.get("address") or item.get("email")).lower()
+                if "@" not in email_addr:
+                    continue
+                existing = addresses.get(email_addr)
+                address = self.temp_address_from_worker_row(item) if self.temp_address_from_worker_row else None
+                if address is None:
+                    continue
+                address.base_url = base_url
+                address.site_password = site_password
+                address.label = "临时邮箱"
+                address.created_at = existing.created_at if existing else self.iso_now()
+                address.updated_at = self.iso_now()
+                addresses[email_addr] = address
+                if existing:
+                    updated += 1
+                else:
+                    imported += 1
+            if imported or updated:
+                self.save_workspace_temp_addresses_state(workspace_id, addresses)
+            return {
+                **result,
+                "success": True,
+                "imported": imported,
+                "updated": updated,
+                "addresses": [addr.public() for addr in addresses.values()],
+            }

@@ -1,0 +1,23 @@
+[project]
+name = "gpt-account-manager"
+version = "1.3.2"
+description = "浏览器优先的 GPT 账号管理助手，支持邮箱验证码、OAuth 刷新、CPA 仓管和 Sub2API auth 导出。"
+readme = "README.md"
+requires-python = ">=3.10"
+
+# 核心服务只依赖 Python 标准库，正常运行不需要安装任何第三方包。
+dependencies = []
+
+[project.optional-dependencies]
+# SOCKS 代理支持：仅当刷新 / 代理检测走 socks4 / socks5 / socks5h 时需要。
+socks = ["PySocks>=1.7.1"]
+# 本地端到端测试用（可选）。
+test = ["playwright>=1.60.0"]
+
+[project.urls]
+Homepage = "https://github.com/margetrp-hub/gpt-account-manager"
+Repository = "https://github.com/margetrp-hub/gpt-account-manager"
+Issues = "https://github.com/margetrp-hub/gpt-account-manager/issues"
+
+# 单元测试基于标准库 unittest，无需 pytest：
+#   python -m unittest discover -s tests -v

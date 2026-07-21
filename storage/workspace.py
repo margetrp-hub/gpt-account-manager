@@ -5,6 +5,8 @@ import re
 from pathlib import Path
 from typing import Any
 
+from storage.file_lock import atomic_write_json
+
 
 WORKSPACE_ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{5,63}$")
 
@@ -30,8 +32,7 @@ def load_json_file(path: Path, fallback: Any) -> Any:
 
 
 def write_json_file(path: Path, payload: Any) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    atomic_write_json(path, payload)
 
 
 def parse_workspace_id(value: Any) -> str | None:

@@ -102,6 +102,36 @@ class WorkspaceRecoveryTests(unittest.TestCase):
             s.WORKSPACES_DIR = original_workspaces_dir
             shutil.rmtree(temp_root, ignore_errors=True)
 
+    def test_workspace_recovery_password_finds_workspace_without_leaking_content(self) -> None:
+        original_workspaces_dir = s.WORKSPACES_DIR
+        temp_root = Path(tempfile.mkdtemp())
+        try:
+            s.WORKSPACES_DIR = temp_root / "workspaces"
+            ws_dir = s.workspace_dir("ws_demo1")
+            ws_dir.mkdir(parents=True, exist_ok=True)
+            (ws_dir / "accounts.json").write_text(
+                json.dumps({"accounts": [{"email": "secret@example.com"}]}),
+                encoding="utf-8",
+            )
+
+            set_result = s.set_workspace_recovery_password(
+                {"password": "secret123", "hint": "mine"},
+                "ws_demo1",
+            )
+            self.assertTrue(set_result["success"])
+
+            payload = s.recover_workspace_by_password({"password": "secret123"})
+            self.assertEqual(payload["workspaces"][0]["workspace_id"], "ws_demo1")
+            self.assertTrue(payload["workspaces"][0]["password_enabled"])
+            self.assertEqual(payload["workspaces"][0]["password_hint"], "mine")
+            self.assertNotIn("secret@example.com", json.dumps(payload))
+
+            wrong = s.recover_workspace_by_password({"password": "wrong-password"})
+            self.assertEqual(wrong["workspaces"], [])
+        finally:
+            s.WORKSPACES_DIR = original_workspaces_dir
+            shutil.rmtree(temp_root, ignore_errors=True)
+
     def test_workspace_messages_response_from_params_delegates_existing_contract(self) -> None:
         seen = {}
         fake_service = mock.Mock()
@@ -268,6 +298,58 @@ class WorkspaceRecoveryTests(unittest.TestCase):
             "workspace_id": "ws_demo",
             "payload": {"query": "hello", "limit": 5},
         })
+
+    def test_workspace_mail_code_response_reads_latest_code_from_cache(self) -> None:
+        original = s.MESSAGE_QUERY_SERVICE
+        fake_service = mock.Mock()
+        fake_service.workspace_messages.return_value = [
+            {
+                "account": "user@example.com",
+                "subject": "Your code",
+                "preview": "Use 654321 to continue",
+                "body": "Use 654321 to continue",
+                "codes": ["654321"],
+                "received_at": "2026-07-07T12:00:00Z",
+                "provider": "graph",
+                "mail_type": "verification",
+            }
+        ]
+        s.MESSAGE_QUERY_SERVICE = fake_service
+        try:
+            result = s.workspace_mail_code_response("ws_demo", {"email": "user@example.com"})
+        finally:
+            s.MESSAGE_QUERY_SERVICE = original
+
+        self.assertTrue(result["success"])
+        self.assertTrue(result["found"])
+        self.assertEqual(result["code"], "654321")
+        self.assertEqual(result["codes"], ["654321"])
+        self.assertEqual(result["latest_message"]["account"], "user@example.com")
+
+    def test_workspace_mail_code_response_can_trigger_live_fetch(self) -> None:
+        original_fetch = s.fetch_saved_workspace_mail
+        original_service = s.MESSAGE_QUERY_SERVICE
+        seen = {}
+        fake_service = mock.Mock()
+        fake_service.workspace_messages.return_value = []
+        s.MESSAGE_QUERY_SERVICE = fake_service
+
+        def fake_fetch_saved_workspace_mail(payload, workspace_id):
+            seen["payload"] = payload
+            seen["workspace_id"] = workspace_id
+            return {"success": True, "messages": []}
+
+        s.fetch_saved_workspace_mail = fake_fetch_saved_workspace_mail
+        try:
+            result = s.workspace_mail_code_response("ws_demo", {"email": "user@example.com", "live": True, "provider": "graph"})
+        finally:
+            s.fetch_saved_workspace_mail = original_fetch
+            s.MESSAGE_QUERY_SERVICE = original_service
+
+        self.assertFalse(result["found"])
+        self.assertEqual(seen["workspace_id"], "ws_demo")
+        self.assertEqual(seen["payload"]["provider"], "graph")
+        self.assertEqual(seen["payload"]["emails"], ["user@example.com"])
 
     def test_fetch_saved_workspace_mail_filters_selected_source_and_saves_results(self) -> None:
         original_load_accounts = s.load_workspace_accounts

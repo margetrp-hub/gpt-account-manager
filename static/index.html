@@ -6,10 +6,11 @@
   <title>GPT账号管理助手</title>
   <link rel="stylesheet" href="/styles.css?v={{APP_VERSION}}">
   <link rel="stylesheet" href="/forge-theme.css?v={{APP_VERSION}}">
+  <script src="/shared/app-shell.js?v={{APP_VERSION}}" defer></script>
   <script src="/nav-links.js?v={{APP_VERSION}}" defer></script>
   <script src="/i18n.js?v={{APP_VERSION}}" defer></script>
 </head>
-<body>
+<body data-app-section="core" data-app-current="inbox">
   <div class="shell">
     <header class="topbar app-header">
       <a class="brand" href="/" aria-label="客户端首页">
@@ -22,7 +23,7 @@
         </span>
         <span class="brand-copy">
           <strong>GPT账号管理助手</strong>
-          <em>账号仓管 / 邮件验证码 / 凭证刷新</em>
+          <em>收件箱 / 邮箱资产 / 订阅管理 / CPA 仓管</em>
         </span>
       </a>
       <nav class="topnav" aria-label="顶部导航">
@@ -39,32 +40,7 @@
       </nav>
     </header>
 
-    <nav class="module-tabs" aria-label="功能导航">
-      <button class="module-tab active" id="tabMailBtn" type="button" aria-current="page">
-        <span>✓</span>
-        <strong>账号管理</strong>
-      </button>
-      <a class="module-tab" href="/dashboard.html">
-        <span>▣</span>
-        <strong>仪表盘</strong>
-      </a>
-      <a class="module-tab" href="/mailboxes.html">
-        <span>✉</span>
-        <strong>邮箱管理</strong>
-      </a>
-      <a class="module-tab" href="/refresh.html">
-        <span>↻</span>
-        <strong>凭证刷新</strong>
-      </a>
-      <a class="module-tab" href="/converter.html">
-        <span>⇄</span>
-        <strong>Session 转换</strong>
-      </a>
-      <a class="module-tab" href="/warehouse.html">
-        <span>→</span>
-        <strong>CPA 仓管</strong>
-      </a>
-    </nav>
+    <nav class="module-tabs" aria-label="功能导航" data-app-nav></nav>
 
     <main class="workspace">
       <aside class="sidebar">

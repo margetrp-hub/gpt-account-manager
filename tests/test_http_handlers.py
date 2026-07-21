@@ -124,6 +124,10 @@ class HttpHandlersTests(unittest.TestCase):
             public_stats_payload=lambda: {"ok": True, "usage": {"workspace_active_24h": 3}},
             workspace_recovery_payload=lambda workspace_ids: {"ok": True, "requested": workspace_ids},
             workspace_recovery_list_payload=lambda: {"ok": True, "workspaces": [{"workspace_id": "ws_demo"}]},
+            set_workspace_recovery_password=lambda payload, workspace: {"workspace": workspace, "password": payload},
+            recover_workspace_by_password=lambda payload: {"recovered": payload},
+            check_account_subscriptions=lambda payload, workspace: {"workspace": workspace, "checked": payload},
+            workspace_mail_code_response=lambda workspace, payload: {"workspace": workspace, "mail_code": payload},
             upgrade_status_payload=lambda: {"status": "idle"},
             get_client_mail_fetch_job=lambda job_id, workspace: {"job_id": job_id, "workspace": workspace},
             send_workspace_messages_json=lambda handler, workspace_id, **kwargs: handler.send_json({"workspace": workspace_id, "messages": []}),
@@ -183,6 +187,18 @@ class HttpHandlersTests(unittest.TestCase):
         self.assertEqual(status, HTTPStatus.OK)
         self.assertEqual(payload["requested"], ["ws_one01", "ws_two02", "ws_three03"])
 
+    def test_client_mail_code_get_routes_to_workspace(self):
+        handlers = self.make_handlers()
+        handler = DummyHandler(path="/client-api/mail-code?email=a%40example.com&live=1")
+
+        handlers.handle_get(handler)
+
+        payload, status = handler.sent[0]
+        self.assertEqual(status, HTTPStatus.OK)
+        self.assertEqual(payload["workspace"], "ws_demo")
+        self.assertEqual(payload["mail_code"]["email"], "a@example.com")
+        self.assertEqual(payload["mail_code"]["live"], "1")
+
     def test_admin_workspace_recovery_list_requires_auth(self):
         handlers = self.make_handlers()
         handler = DummyHandler(path="/admin-api/workspaces/recover")
@@ -222,6 +238,49 @@ class HttpHandlersTests(unittest.TestCase):
         self.assertEqual(status, HTTPStatus.OK)
         self.assertEqual(payload["workspace"], "ws_demo")
         self.assertEqual(payload["result"]["payload"]["hydrated"], "ws_demo")
+
+    def test_client_workspace_password_post_routes_to_workspace(self):
+        handlers = self.make_handlers()
+        handler = DummyHandler(path="/client-api/workspaces/recovery-password", payload={"password": "secret123"})
+
+        handlers.handle_post(handler)
+
+        payload, status = handler.sent[0]
+        self.assertEqual(status, HTTPStatus.OK)
+        self.assertEqual(payload["workspace"], "ws_demo")
+        self.assertEqual(payload["password"], {"password": "secret123"})
+
+    def test_client_recover_by_password_post_does_not_require_workspace(self):
+        handlers = self.make_handlers()
+        handler = DummyHandler(path="/client-api/workspaces/recover-by-password", payload={"password": "secret123"})
+
+        handlers.handle_post(handler)
+
+        payload, status = handler.sent[0]
+        self.assertEqual(status, HTTPStatus.OK)
+        self.assertEqual(payload["recovered"], {"password": "secret123"})
+
+    def test_client_account_subscription_check_routes_to_workspace(self):
+        handlers = self.make_handlers()
+        handler = DummyHandler(path="/client-api/accounts/check-subscription", payload={"items": [{"email": "a@example.com"}]})
+
+        handlers.handle_post(handler)
+
+        payload, status = handler.sent[0]
+        self.assertEqual(status, HTTPStatus.OK)
+        self.assertEqual(payload["workspace"], "ws_demo")
+        self.assertEqual(payload["checked"], {"items": [{"email": "a@example.com"}]})
+
+    def test_client_mail_code_post_routes_to_workspace(self):
+        handlers = self.make_handlers()
+        handler = DummyHandler(path="/client-api/mail-code", payload={"email": "a@example.com", "live": True})
+
+        handlers.handle_post(handler)
+
+        payload, status = handler.sent[0]
+        self.assertEqual(status, HTTPStatus.OK)
+        self.assertEqual(payload["workspace"], "ws_demo")
+        self.assertEqual(payload["mail_code"], {"email": "a@example.com", "live": True})
 
     def test_workspace_import_post_routes_to_workspace_service(self):
         handlers = self.make_handlers()

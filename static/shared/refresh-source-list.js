@@ -32,6 +32,7 @@
       storageKeys,
       mergeSelectedAccountsIntoQueue,
     } = actions;
+    const lineLabels = window.GAM?.appShell?.LINE_LABELS || {};
 
     function accountOptions(active) {
       const options = [
@@ -107,7 +108,7 @@
       els.sourceNext.disabled = state.sourcePage >= pages;
       if (!pageItems.length) {
         els.sourceList.className = "mailbox-list empty";
-        els.sourceList.textContent = state.accounts.length ? "没有匹配的邮箱" : "请先在账号管理页导入邮箱";
+        els.sourceList.textContent = state.accounts.length ? "没有匹配的邮箱" : `请先在${lineLabels.subscriptionsPage || "订阅管理页"}导入邮箱`;
         return;
       }
       els.sourceList.className = "mailbox-list";

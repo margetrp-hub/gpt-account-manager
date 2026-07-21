@@ -1,27 +1,19 @@
 const WORKSPACE_ID_STORAGE_KEY = "ctgptm.workspaceId";
-
-function bootstrapWorkspaceId() {
-  if (window.GAM?.base?.resolveWorkspaceId) {
-    return window.GAM.base.resolveWorkspaceId(WORKSPACE_ID_STORAGE_KEY);
-  }
-  const existing = window.GAM?.base?.getWorkspaceId?.(WORKSPACE_ID_STORAGE_KEY)
-    || localStorage.getItem(WORKSPACE_ID_STORAGE_KEY)
-    || "";
-  if (/^[A-Za-z0-9][A-Za-z0-9_.-]{5,63}$/.test(existing)) return existing;
-  const next = `ws_${crypto.randomUUID().replace(/-/g, "")}`;
-  localStorage.setItem(WORKSPACE_ID_STORAGE_KEY, next);
-  return next;
-}
-
-const workspaceId = bootstrapWorkspaceId();
+const sharedStoragePrefixes = window.GAM?.base?.WORKSPACE_SCOPED_PREFIXES || {};
+const sharedLegacyKeys = window.GAM?.base?.LEGACY_SHARED_KEYS || {};
+const workspaceId = window.GAM?.base?.resolveWorkspaceId?.(WORKSPACE_ID_STORAGE_KEY)
+  || window.GAM?.base?.getWorkspaceId?.(WORKSPACE_ID_STORAGE_KEY)
+  || localStorage.getItem(WORKSPACE_ID_STORAGE_KEY)
+  || `ws_${crypto.randomUUID().replace(/-/g, "")}`;
 const LEGACY_STORAGE_KEYS = {
-  accounts: "ctgptm.mail.accounts",
-  categories: "ctgptm.mail.categories",
+  accounts: sharedLegacyKeys.legacyMailAccounts || "ctgptm.mail.accounts",
+  categories: sharedLegacyKeys.legacyMailCategories || "ctgptm.mail.categories",
+  tempSettings: sharedLegacyKeys.legacyTempSettings || "ctgptm.mail.tempSettings",
 };
 const STORAGE_KEYS = {
   accounts: `${LEGACY_STORAGE_KEYS.accounts}:${workspaceId}`,
   categories: `${LEGACY_STORAGE_KEYS.categories}:${workspaceId}`,
-  tempSettings: "ctgptm.mail.tempSettings",
+  tempSettings: `${LEGACY_STORAGE_KEYS.tempSettings}:${workspaceId}`,
   workspaceId: WORKSPACE_ID_STORAGE_KEY,
 };
 
@@ -84,6 +76,7 @@ const els = {
   selectAll: document.querySelector("#selectAllMailboxes"),
   copySelected: document.querySelector("#copySelectedMailboxes"),
   groupSelected: document.querySelector("#groupSelectedMailboxes"),
+  verifySelected: document.querySelector("#verifySelectedMailboxes"),
   enqueueSelected: document.querySelector("#enqueueSelectedMailboxes"),
   exportBtn: document.querySelector("#exportMailboxesBtn"),
   exportBackupBtn: document.querySelector("#exportMailboxBackupBtn"),
@@ -143,9 +136,11 @@ const mailboxAccountModel = window.GAM?.mailboxAccountModel?.createMailboxAccoun
   legacyCategoryNames: [...LEGACY_CATEGORY_NAMES],
   serviceLabels: SERVICE_LABELS,
 });
+const initialStoredAccounts = loadJson(STORAGE_KEYS.accounts, []);
+const initialStoredCategories = loadJson(STORAGE_KEYS.categories, []);
 const state = {
-  accounts: normalizeStoredAccounts(loadJson(STORAGE_KEYS.accounts, [])),
-  categories: normalizeStoredCategories(loadJson(STORAGE_KEYS.categories, [])),
+  accounts: normalizeStoredAccounts(initialStoredAccounts),
+  categories: normalizeStoredCategories(initialStoredCategories),
   selected: new Set(),
   page: 1,
   sourceView: "all",
@@ -188,7 +183,12 @@ const refreshQueueHelper = refreshQueueModel?.createRefreshQueueModel?.({
   },
 });
 
-const tempSettings = loadJson(STORAGE_KEYS.tempSettings, {});
+const tempSettings = base?.loadScopedJson
+  ? base.loadScopedJson(STORAGE_KEYS.tempSettings, LEGACY_STORAGE_KEYS.tempSettings, {})
+  : loadJson(STORAGE_KEYS.tempSettings, {});
+if (!localStorage.getItem(STORAGE_KEYS.tempSettings) && Object.keys(tempSettings || {}).length) {
+  saveJson(STORAGE_KEYS.tempSettings, tempSettings);
+}
 els.tempApi.value = normalizeTempWorkerUrl(tempSettings.base_url || "");
 els.tempSitePassword.value = tempSettings.site_password || "";
 els.workspaceText.textContent = workspaceId;
@@ -312,6 +312,10 @@ function usableSecret(value) {
   return Boolean(String(value || "").trim()) && !isMaskedSecret(value);
 }
 
+function storedSecret(value) {
+  return Boolean(String(value || "").trim());
+}
+
 function preferRealSecret(next, current) {
   if (mailboxAccountModel?.preferRealSecret) return mailboxAccountModel.preferRealSecret(next, current);
   if (usableSecret(next)) return String(next);
@@ -396,6 +400,12 @@ function sortAccounts(accounts) {
     if (orderDiff) return orderDiff;
     return String(a.email || "").localeCompare(String(b.email || ""));
   });
+}
+
+function dedupeAccounts(accounts) {
+  return mailboxAccountModel?.dedupeAccounts
+    ? mailboxAccountModel.dedupeAccounts(accounts)
+    : sortAccounts(accounts);
 }
 
 function importDateCategory(value) {
@@ -485,7 +495,6 @@ function normalizeStoredAccounts(value) {
   (Array.isArray(value) ? value : []).forEach((account) => {
     const normalized = normalizeStoredAccount(account);
     if (!normalized) return;
-    if (normalized.source === "temp") byId.delete(`microsoft:${normalized.email.toLowerCase()}`);
     byId.set(normalized.id, normalized);
   });
   return sortAccounts(byId.values());
@@ -572,9 +581,9 @@ function ensureCategory(name) {
 }
 
 function accountMissingCredential(account) {
-  if (account.source === "temp") return !usableSecret(account.jwt);
-  if (account.source === "generic") return !usableSecret(account.password);
-  return !usableSecret(account.client_id) || !usableSecret(account.refresh_token);
+  if (account.source === "temp") return !storedSecret(account.jwt);
+  if (account.source === "generic") return !storedSecret(account.password);
+  return !storedSecret(account.client_id) || !storedSecret(account.refresh_token);
 }
 
 function accountKindLabel(account) {
@@ -586,12 +595,29 @@ function accountKindLabel(account) {
     if (mode === "imap") return "IMAP";
     return "IMAP/POP3";
   }
-  return usableSecret(account.password) ? "Graph+IMAP+密码" : "Graph/IMAP";
+  return storedSecret(account.password) ? "Outlook OAuth + 密码" : "Outlook OAuth";
 }
 
 function accountHasError(account) {
   const status = String(account.last_status || "").toLowerCase();
   return ["error", "failed"].includes(status) || Boolean(account.last_error || account.last_error_code || account.last_error_label);
+}
+
+function accountSignature(account) {
+  return [
+    account?.id || "",
+    account?.email || "",
+    account?.source || "",
+    account?.category || "",
+    account?.last_status || "",
+    account?.last_error_code || "",
+    account?.last_error_label || "",
+    account?.mail_verify_status || "",
+  ].join("|");
+}
+
+function accountsSignature(accounts) {
+  return (Array.isArray(accounts) ? accounts : []).map((account) => accountSignature(account)).join("~");
 }
 
 function accountIsBanned(account) {
@@ -816,7 +842,6 @@ function upsertAccounts(incoming) {
   let updated = 0;
   incoming.forEach((account) => {
     if (!account) return;
-    if (account.source === "temp") byId.delete(`microsoft:${account.email.toLowerCase()}`);
     const existing = byId.get(account.id);
     if (existing) {
       Object.assign(existing, account, {
@@ -841,7 +866,7 @@ function upsertAccounts(incoming) {
     }
     if (account.category) ensureCategory(account.category);
   });
-  state.accounts = sortAccounts(byId.values());
+  state.accounts = dedupeAccounts(byId.values());
   invalidateFilteredAccountsCache();
   saveAll();
   return { imported, updated };
@@ -851,7 +876,6 @@ function mergeServerAccounts(items) {
   const byId = new Map(state.accounts.map((account) => [account.id, account]));
   items.forEach((item) => {
     if (!item?.id) return;
-    if (item.source === "temp") byId.delete(`microsoft:${item.email.toLowerCase()}`);
     const existing = byId.get(item.id);
     if (existing) {
       Object.assign(existing, item, {
@@ -873,7 +897,7 @@ function mergeServerAccounts(items) {
     }
     if (item.category) ensureCategory(item.category);
   });
-  state.accounts = sortAccounts(byId.values());
+  state.accounts = dedupeAccounts(byId.values());
   invalidateFilteredAccountsCache();
   saveAll();
 }
@@ -900,7 +924,7 @@ function pruneSelectedRowsToCurrentFilter() {
 
 function mailboxFilterCacheKey() {
   return JSON.stringify([
-    state.accounts.length,
+    accountsSignature(state.accounts),
     els.searchInput.value.trim().toLowerCase(),
     els.sourceFilter.value || "all",
     state.sourceView,
@@ -950,6 +974,9 @@ function syncSelectionUi(visible = visibleAccountsForCurrentPage()) {
   const selectedOnPage = visibleIds.filter((id) => state.selected.has(id)).length;
   els.selectAll.checked = Boolean(visible.length && selectedOnPage === visible.length);
   els.selectAll.indeterminate = Boolean(selectedOnPage && selectedOnPage < visible.length);
+  if (els.verifySelected) {
+    els.verifySelected.disabled = !selectedRows().length;
+  }
   if (els.enqueueSelected) {
     els.enqueueSelected.disabled = !selectedRows().length;
   }
@@ -1071,9 +1098,154 @@ function mailboxCopyLine(account) {
   return [account.email, account.password || "", account.client_id || "", account.refresh_token || "", account.category || ""].join("----");
 }
 
+function mailboxFetchPayload(account) {
+  if (account.source === "generic") {
+    return {
+      source: "generic",
+      provider: normalizeGenericMode(account.mode || account.provider),
+      limit: 12,
+      email: account.email,
+      emails: [account.email],
+      accounts: [],
+      temp_addresses: [],
+      generic_accounts: [genericAccountPayload(account)],
+    };
+  }
+  if (account.source === "temp") {
+    return {
+      source: "temp",
+      provider: "auto",
+      limit: 12,
+      email: account.email,
+      emails: [account.email],
+      accounts: [],
+      temp_addresses: [{
+        email: account.email,
+        jwt: account.jwt,
+        base_url: account.base_url,
+        site_password: account.site_password,
+      }],
+      generic_accounts: [],
+    };
+  }
+  return {
+    source: "microsoft",
+    provider: "auto",
+    limit: 12,
+    email: account.email,
+    emails: [account.email],
+    accounts: [{
+      email: account.email,
+      password: account.password,
+      client_id: account.client_id,
+      refresh_token: account.refresh_token,
+    }],
+    temp_addresses: [],
+    generic_accounts: [],
+  };
+}
+
+function mailboxResultLabel(result) {
+  return String(
+    result?.error_label
+    || result?.last_error_label
+    || result?.error_code
+    || result?.last_error_code
+    || "收信失败"
+  ).trim();
+}
+
+function applyMailboxVerifyResult(account, result) {
+  const codes = Array.isArray(result?.codes) ? result.codes.filter(Boolean) : [];
+  const hasCode = Boolean(result?.has_verification_code || result?.first_code || codes.length);
+  account.last_check_at = result?.checked_at || new Date().toISOString();
+  account.last_message_count = Number(result?.message_count ?? 0);
+  account.last_error = "";
+  account.last_error_code = "";
+  account.last_error_label = "";
+  account.last_error_hint = "";
+  if (!result?.ok) {
+    const rawError = (result?.errors || []).filter(Boolean).join("；") || result?.error || "收信失败";
+    const errorCode = String(result?.error_code || "mail_pickup_unavailable");
+    const errorLabel = mailboxResultLabel(result);
+    account.mail_verify_status = "error";
+    account.last_status = "error";
+    account.last_error = rawError;
+    account.last_error_code = errorCode;
+    account.last_error_label = errorLabel;
+    account.last_error_hint = String(result?.error_hint || errorLabel);
+    return { status: "failed", label: errorLabel };
+  }
+  account.mail_verify_status = hasCode ? "ok" : "no_code";
+  account.last_status = account.mail_verify_status;
+  return {
+    status: hasCode ? "ok" : "no_code",
+    label: hasCode ? "可收件，已发现验证码邮件" : "可收件，未发现验证码邮件",
+  };
+}
+
 async function copyText(text, message) {
   await navigator.clipboard.writeText(text);
   toast(message);
+}
+
+async function verifySelectedMailboxes() {
+  const rows = resolvedMailboxActionRows({ fallback: "none" });
+  if (!rows.length) {
+    toast("请先选择邮箱");
+    return;
+  }
+  const oldText = els.verifySelected?.textContent || "验证邮箱";
+  if (els.verifySelected) {
+    els.verifySelected.disabled = true;
+    els.verifySelected.textContent = "验证中...";
+  }
+  let ok = 0;
+  let noCode = 0;
+  let failed = 0;
+  setStatus(`正在验证 ${rows.length} 个邮箱...`);
+  try {
+    for (const account of rows) {
+      try {
+        const response = await fetch("/client-api/fetch", {
+          method: "POST",
+          headers: apiHeaders(),
+          body: JSON.stringify(mailboxFetchPayload(account)),
+        });
+        const data = await readJsonResponse(response, "验证邮箱失败");
+        const result = (data.results || []).find((item) =>
+          String(item?.email || "").toLowerCase() === String(account.email || "").toLowerCase()
+        ) || (data.results || [])[0] || {
+          ok: false,
+          error_code: "mail_pickup_unavailable",
+          error_label: response.ok ? "邮箱没有返回取信结果" : (data.error || "验证邮箱失败"),
+          error: data.error || "邮箱没有返回取信结果",
+        };
+        const applied = applyMailboxVerifyResult(account, result);
+        if (applied.status === "ok") ok += 1;
+        else if (applied.status === "no_code") noCode += 1;
+        else failed += 1;
+      } catch (error) {
+        failed += 1;
+        applyMailboxVerifyResult(account, {
+          ok: false,
+          error_code: "mail_pickup_unavailable",
+          error_label: "验证邮箱失败",
+          error: error?.message || "验证邮箱失败",
+        });
+      }
+    }
+    invalidateFilteredAccountsCache();
+    saveAll();
+    renderAll();
+    setStatus(`验证完成：有验证码 ${ok}，未发现验证码 ${noCode}，失败 ${failed}`, failed ? "error" : "ok");
+    toast(`验证完成：可收件 ${ok + noCode}，失败 ${failed}`);
+  } finally {
+    if (els.verifySelected) {
+      els.verifySelected.disabled = false;
+      els.verifySelected.textContent = oldText;
+    }
+  }
 }
 
 function enqueueSelectedAccounts() {
@@ -1479,6 +1651,7 @@ els.copySelected.addEventListener("click", async () => {
 });
 
 els.groupSelected.addEventListener("click", setSelectedGroup);
+els.verifySelected?.addEventListener("click", verifySelectedMailboxes);
 els.enqueueSelected?.addEventListener("click", enqueueSelectedAccounts);
 els.deleteSelected.addEventListener("click", () => deleteAccounts(resolvedMailboxActionRows()));
 els.exportBtn.addEventListener("click", () => {
@@ -1505,4 +1678,11 @@ els.exportBackupBtn.addEventListener("click", () => {
 });
 
 renderAll();
+
+if (JSON.stringify(initialStoredAccounts) !== JSON.stringify(state.accounts)) {
+  scheduleSaveJson(STORAGE_KEYS.accounts, state.accounts, 0);
+}
+if (JSON.stringify(initialStoredCategories) !== JSON.stringify(state.categories)) {
+  scheduleSaveJson(STORAGE_KEYS.categories, state.categories, 0);
+}
 syncMailboxes({ quiet: true });

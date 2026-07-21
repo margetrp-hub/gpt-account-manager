@@ -62,25 +62,35 @@
 - OAuth 刷新链路使用后端协议状态机，生成 CPA / Sub2API 可用的 auth JSON；刷新时要求显式填写代理 URL，避免误用 VPS 默认出口。
 - 自检、管理员页和管理员 API 在设置 `MAIL_PICKUP_ADMIN_TOKEN` 后变成私有入口。
 
-## 页面说明
+## 页面结构
 
-- `/`：账号管理台，导入邮箱、收信、查码、分组、删除本地缓存、推送刷新队列。
-- `/mailboxes.html`：邮箱管理台，集中整理 Outlook 四段、临时邮箱 JWT 和其他邮箱资料，支持批量导入、搜索筛选、分组、复制、一行一个邮箱的 TXT 导出、JSON 备份和删除。
-- `/refresh.html`：凭证刷新队列，处理邮箱登录账号、CPA 同步、auth JSON 导出。
-- `/warehouse.html`：CPA 仓管，扫描异常账号、删除失效 auth、查看诊断原因。
-- `/converter.html`：本地 Session / auth JSON 转换工具。
+### 主线
+
+- `/`：收件箱工作台。导入邮箱、收信、查码、搜索缓存邮件、推送刷新队列。
+- `/mailboxes.html`：邮箱管理。集中整理 Outlook 四段、临时邮箱 JWT 和其他邮箱资料，支持批量导入、搜索筛选、分组、复制、一行一个邮箱的 TXT 导出、JSON 备份和删除。
+- `/accounts.html`：订阅管理。集中整理订阅账号，区分 FREE、PLUS、PRO、封禁与未注册，并可做在线核验。
+- `/warehouse.html`：CPA 仓管。扫描异常账号、删除失效 auth、查看诊断原因。
+- `/dashboard.html`：仪表盘。汇总封禁趋势、缓存邮件、邮箱资产和刷新结果。
+
+### 插件
+
+- `/plugins.html`：插件中心。收纳所有非主线工具入口。
+- `/refresh.html`：凭证刷新。处理邮箱登录账号、接码、CPA 同步、auth JSON 导出。
+- `/converter.html`：Session 转换。本地 Session / auth JSON 转换工具。
+- `/cdk.html`：CDK 取码 / 兑换页插件入口，适合单独绑域名和独立部署。
+- `/api.html`：浏览器可直接查看的 API 文档摘要。
+- `/recover.html`：工作区找回。页面空白、按钮失效、看不到原邮箱、或者浏览器切错工作区时，直接在这里恢复当前浏览器记住过的工作区；管理员登录后还可以查看服务器工作区摘要。
+- `/health.html`：部署自检。公共部署时需要管理员 token/cookie。
 - `/login.html`：管理员登录页，写入 HttpOnly cookie，并可在当前浏览器记住 token。
 - `/admin.html`：管理员临时邮箱 JWT 提取和公共池导出辅助页。
-- `/health.html`：部署自检页，公共部署时需要管理员 token/cookie。
-- `/recover.html`：工作区找回页。更新后页面空白、按钮失效、看不到原邮箱、或者浏览器切错工作区时，直接打开这个入口；普通用户只能恢复当前浏览器记住过的工作区，管理员登录后可以查看服务器工作区摘要。
 
 ## 界面截图
 
 下面是实际页面渲染后的脱敏截图，邮箱、token、代理和账号标识都已经打码。
 
-### 账号管理台
+### 收件箱工作台
 
-![账号管理台](docs/screenshots/account-workbench-masked.png)
+![收件箱工作台](docs/screenshots/account-workbench-masked.png)
 
 ### 风险仪表盘
 
@@ -89,6 +99,10 @@
 ### 邮箱管理
 
 ![邮箱管理页](docs/screenshots/mailbox-manager-masked.png)
+
+### 订阅管理
+
+![订阅管理页](docs/screenshots/account-workbench-masked.png)
 
 ### 凭证刷新
 
@@ -245,9 +259,13 @@ sudo systemctl status ctgptm-mail-assistant --no-pager
 
 - `POST /client-api/fetch`：当前浏览器提交邮箱资料并取信，不写入全局账号池。
 - `POST /client-api/messages/delete`：删除/隐藏本地缓存邮件，不删除远端邮箱真实邮件。
+- `GET /client-api/mail-code` / `POST /client-api/mail-code`：按指定邮箱返回当前工作区最新验证码，可选 `live=1` 先触发一次取信。
+- `GET /api/mail-code`：管理员/运维面版本，便于脚本或独立插件读取指定邮箱验证码。
 - `POST /client-api/cpa/scan-401`：扫描 CPA/CLIProxyAPI 管理端点，并诊断异常凭证原因。
 - `POST /client-api/cpa/repair-401`：对选中 CPA auth file 执行修复或删除。
 - `POST /admin-api/extract-jwts`：管理员临时邮箱 JWT 提取，需要 `MAIL_PICKUP_ADMIN_TOKEN`。
+
+标准接口说明见 [docs/API.md](docs/API.md)，浏览器摘要版见 `/api.html`。
 
 ## 开源边界
 
@@ -269,4 +287,4 @@ sudo systemctl status ctgptm-mail-assistant --no-pager
 - [maowuzz/chatgpt-session-forge](https://github.com/maowuzz/chatgpt-session-forge)
 - [gtxx3600/GPTSession2CPAandSub2API](https://github.com/gtxx3600/GPTSession2CPAandSub2API)
 
-本仓库没有 vendoring 或直接复制这些项目，核心流程是围绕浏览器优先的账号管理、邮箱接码、CPA 仓管和 OAuth 刷新重新组织的。
+本仓库没有 vendoring 或直接复制这些项目，核心流程是围绕浏览器优先的收件箱、邮箱资产、订阅管理、CPA 仓管和 OAuth 刷新重新组织的。

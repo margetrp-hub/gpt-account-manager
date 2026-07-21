@@ -115,6 +115,79 @@
       });
     }
 
+    function accountCompletenessScore(account) {
+      const secretFields = [
+        account.password,
+        account.client_id,
+        account.refresh_token,
+        account.jwt,
+        account.site_password,
+        account.token,
+        account.imap_host,
+        account.pop3_host,
+        account.base_url,
+        account.username,
+      ];
+      return secretFields.reduce((score, value) => {
+        const text = String(value || "").trim();
+        if (!text) return score;
+        return score + 1;
+      }, 0);
+    }
+
+    function sourcePriority(account) {
+      if (account.source === "microsoft") return 3;
+      if (account.source === "temp") return 2;
+      if (account.source === "generic") return 1;
+      return 0;
+    }
+
+    function mergeAccountRecords(current, incoming) {
+      if (!current) return incoming;
+      const currentTime = sortableTime(current.updated_at || current.imported_at || current.created_at);
+      const incomingTime = sortableTime(incoming.updated_at || incoming.imported_at || incoming.created_at);
+      const incomingIsBetter = accountCompletenessScore(incoming) > accountCompletenessScore(current)
+        || (accountCompletenessScore(incoming) === accountCompletenessScore(current)
+          && (sourcePriority(incoming) > sourcePriority(current) || incomingTime >= currentTime));
+      const base = incomingIsBetter ? incoming : current;
+      const fallback = incomingIsBetter ? current : incoming;
+      return {
+        ...fallback,
+        ...base,
+        password: preferRealSecret(base.password, fallback.password),
+        client_id: preferRealSecret(base.client_id, fallback.client_id),
+        refresh_token: preferRealSecret(base.refresh_token, fallback.refresh_token),
+        jwt: preferRealSecret(base.jwt, fallback.jwt),
+        site_password: preferRealSecret(base.site_password, fallback.site_password),
+        token: preferRealSecret(base.token, fallback.token),
+        username: base.username || fallback.username || "",
+        mode: base.mode || fallback.mode || "auto",
+        imap_host: base.imap_host || fallback.imap_host || "",
+        imap_port: base.imap_port || fallback.imap_port || 993,
+        pop3_host: base.pop3_host || fallback.pop3_host || "",
+        pop3_port: base.pop3_port || fallback.pop3_port || 995,
+        base_url: base.base_url || fallback.base_url || "",
+        category: base.category || fallback.category || "",
+        imported_at: base.imported_at || fallback.imported_at || "",
+        import_order: base.import_order ?? fallback.import_order,
+        created_at: base.created_at || fallback.created_at || "",
+        updated_at: base.updated_at || fallback.updated_at || new Date().toISOString(),
+        selected: base.selected !== false && fallback.selected !== false,
+      };
+    }
+
+    function dedupeAccounts(accounts) {
+      const byEmail = new Map();
+      [...accounts].forEach((account) => {
+        const normalized = normalizeStoredAccount(account);
+        if (!normalized) return;
+        if (!isAllowedCategory(normalized.category)) normalized.category = "";
+        const key = normalized.email.toLowerCase();
+        byEmail.set(key, mergeAccountRecords(byEmail.get(key), normalized));
+      });
+      return sortAccounts(byEmail.values());
+    }
+
     function importDateCategory(value) {
       const date = new Date(String(value || "").replace(" ", "T"));
       if (Number.isNaN(date.getTime())) return "";
@@ -241,15 +314,7 @@
 
     function normalizeStoredAccounts(value) {
       if (!Array.isArray(value)) return [];
-      const byId = new Map();
-      value.forEach((account) => {
-        const normalized = normalizeStoredAccount(account);
-        if (!normalized) return;
-        if (!isAllowedCategory(normalized.category)) normalized.category = "";
-        if (normalized.source === "temp") byId.delete(`microsoft:${normalized.email.toLowerCase()}`);
-        byId.set(normalized.id, normalized);
-      });
-      return sortAccounts(byId.values());
+      return dedupeAccounts(value);
     }
 
     return {
@@ -271,6 +336,8 @@
       looksLikeMicrosoftRefreshToken,
       normalizeStoredAccount,
       normalizeStoredAccounts,
+      dedupeAccounts,
+      mergeAccountRecords,
     };
   }
 

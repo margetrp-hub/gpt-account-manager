@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable
 
+from storage.file_lock import atomic_write_text, locked_path
 from storage.message_sqlite_store import (
     load_messages as sqlite_load_messages,
     save_messages_snapshot as sqlite_save_messages_snapshot,
@@ -68,23 +69,14 @@ def save_messages(
     *,
     sort_key: Callable[[dict[str, Any]], Any],
 ) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
     trimmed = sorted(messages, key=sort_key, reverse=True)[:2000]
     payload = {
         "updated_at": _iso_now(),
         "messages": trimmed,
     }
-    tmp = path.with_suffix(".json.tmp")
-    try:
-        tmp.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
-        tmp.replace(path)
-    except OSError:
-        try:
-            tmp.unlink(missing_ok=True)
-        except OSError:
-            pass
-        raise
-    sqlite_save_messages_snapshot(path, trimmed, dedupe_key=message_key)
+    with locked_path(path):
+        atomic_write_text(path, json.dumps(payload, ensure_ascii=False, indent=2))
+        sqlite_save_messages_snapshot(path, trimmed, dedupe_key=message_key)
 
 
 def upsert_messages(
@@ -98,20 +90,21 @@ def upsert_messages(
 ) -> None:
     if not incoming:
         return
-    cache = {
-        message_key(message): message
-        for message in load_messages(
-            path,
-            coerce_text=coerce_text,
-            normalize_mail_type=normalize_mail_type,
-            mail_type_labels=mail_type_labels,
-        )
-    }
-    now = _iso_now()
-    for message in incoming:
-        message.setdefault("cached_at", now)
-        cache[message_key(message)] = message
-    save_messages(list(cache.values()), path, sort_key=sort_key)
+    with locked_path(path):
+        cache = {
+            message_key(message): message
+            for message in load_messages(
+                path,
+                coerce_text=coerce_text,
+                normalize_mail_type=normalize_mail_type,
+                mail_type_labels=mail_type_labels,
+            )
+        }
+        now = _iso_now()
+        for message in incoming:
+            message.setdefault("cached_at", now)
+            cache[message_key(message)] = message
+        save_messages(list(cache.values()), path, sort_key=sort_key)
 
 
 def _normalize_rows(

@@ -1,0 +1,138 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>GPT账号管理助手 - 订阅管理</title>
+  <link rel="stylesheet" href="/styles.css?v={{APP_VERSION}}">
+  <link rel="stylesheet" href="/forge-theme.css?v={{APP_VERSION}}">
+  <script src="/shared/app-shell.js?v={{APP_VERSION}}" defer></script>
+  <script src="/nav-links.js?v={{APP_VERSION}}" defer></script>
+  <script src="/i18n.js?v={{APP_VERSION}}" defer></script>
+</head>
+<body data-app-section="core" data-app-current="subscriptions">
+  <div class="shell account-manager-shell">
+    <header class="topbar app-header">
+      <a class="brand" href="/" aria-label="GPT账号管理助手">
+        <span class="brand-mark" aria-hidden="true">
+          <svg viewBox="0 0 24 24" width="23" height="23">
+            <path d="M12 3 3.5 7.4 12 12l8.5-4.6L12 3Z"></path>
+            <path d="m4 12 8 4.3 8-4.3"></path>
+            <path d="m4 16.5 8 4.3 8-4.3"></path>
+          </svg>
+        </span>
+        <span class="brand-copy">
+          <strong>GPT账号管理助手</strong>
+          <em>订阅状态 / 套餐判断 / 统一管理</em>
+        </span>
+      </a>
+      <nav class="topnav" aria-label="顶部导航">
+        <a class="github-link" href="https://github.com/margetrp-hub/gpt-account-manager" target="_blank" rel="noreferrer" aria-label="GitHub 开源项目">GitHub</a>
+      </nav>
+    </header>
+
+    <nav class="module-tabs" aria-label="功能导航" data-app-nav></nav>
+
+    <main class="account-manager-layout">
+      <section class="panel account-manager-main">
+        <div class="account-manager-head">
+          <div>
+            <p class="eyebrow">Account Management</p>
+            <h1>订阅管理</h1>
+            <p>统一整理多个订阅账号，区分 FREE、PLUS、PRO、封禁，以及通过邮件线索推断的订阅状态。</p>
+          </div>
+          <div class="account-risk-note">
+            <strong>风险提示</strong>
+            <span>在线核验需要用户自己提供代理和指纹配置，且必须手动确认后执行。</span>
+          </div>
+        </div>
+
+        <div class="account-stats-grid">
+          <div class="account-stat"><span>全部</span><strong id="accountTotal">0</strong></div>
+          <div class="account-stat"><span>FREE</span><strong id="accountFree">0</strong></div>
+          <div class="account-stat premium"><span>PLUS / PRO</span><strong id="accountPremium">0</strong></div>
+          <div class="account-stat danger"><span>封禁</span><strong id="accountBanned">0</strong></div>
+          <div class="account-stat warning"><span>未注册</span><strong id="accountUnregistered">0</strong></div>
+        </div>
+
+        <div class="account-manager-grid">
+          <section class="account-import-panel" aria-labelledby="accountImportTitle">
+            <h2 id="accountImportTitle">导入账号</h2>
+            <p>支持粘贴邮箱、AT、RT、账号状态、订阅邮件线索。邮件推断和在线核验会分开标注，不混在一起。</p>
+            <label>
+              <span>导入内容</span>
+              <textarea id="accountImportText" spellcheck="false" placeholder="user@example.com----AT 或 RT----PLUS&#10;也可以粘贴订阅邮件主题/正文，例如 New plan / 新套餐 / プラン / abonnement"></textarea>
+            </label>
+            <div class="account-import-actions">
+              <button id="importAccountsBtn" class="primary" type="button">导入 / 解析</button>
+              <button id="clearAccountsBtn" class="ghost danger" type="button">清空账号</button>
+            </div>
+          </section>
+
+          <section class="account-online-panel" aria-labelledby="accountOnlineTitle">
+            <h2 id="accountOnlineTitle">在线核验设置</h2>
+            <p>用于之后调用 ChatGPT accounts/check 判断 Plus/free。需要用户主动选择代理和指纹，避免误用服务器默认出口。</p>
+            <label>
+              <span>代理 URL</span>
+              <input id="accountProxyUrl" placeholder="http://user:pass@host:port 或 socks5://host:port">
+            </label>
+            <label>
+              <span>User-Agent / 指纹备注</span>
+              <input id="accountFingerprint" placeholder="Mozilla/5.0 ...">
+            </label>
+            <label class="account-risk-check">
+              <input id="accountRiskConfirm" type="checkbox">
+              <span>我确认这是自己的账号，并了解在线核验会向 OpenAI 发起请求。</span>
+            </label>
+            <button id="onlineCheckBtn" type="button">在线核验选中账号</button>
+            <em id="onlineCheckStatus">当前版本先保存配置并提示风险；不会静默联网。</em>
+          </section>
+        </div>
+
+        <div class="account-toolbar">
+          <input id="accountSearch" placeholder="搜索邮箱、状态、线索">
+          <select id="accountStatusFilter">
+            <option value="all">全部状态</option>
+            <option value="free">FREE</option>
+            <option value="plus">PLUS</option>
+            <option value="pro">PRO</option>
+            <option value="banned">封禁</option>
+            <option value="unregistered">未注册</option>
+            <option value="unknown">未知</option>
+          </select>
+          <select id="accountGroupBy">
+            <option value="status">按状态分组</option>
+            <option value="source">按来源分组</option>
+            <option value="domain">按邮箱域名分组</option>
+            <option value="none">平铺显示</option>
+          </select>
+          <button id="selectAllAccountsBtn" type="button">全选当前</button>
+          <button id="deleteSelectedAccountsBtn" class="ghost danger" type="button">删除已选</button>
+          <button id="exportAccountsBtn" type="button">导出账号</button>
+        </div>
+
+        <div class="account-table-wrap">
+          <table class="account-table">
+            <thead>
+              <tr>
+                <th></th>
+                <th>账号</th>
+                <th>状态</th>
+                <th>来源</th>
+                <th>订阅时间</th>
+                <th>备注</th>
+              </tr>
+            </thead>
+            <tbody id="accountTableBody">
+              <tr><td colspan="6">暂无账号，先导入。</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+    </main>
+  </div>
+  <div id="toast" class="toast" role="status" aria-live="polite"></div>
+  <script src="/shared/base.js?v={{APP_VERSION}}" defer></script>
+  <script src="/accounts.js?v={{APP_VERSION}}" defer></script>
+</body>
+</html>

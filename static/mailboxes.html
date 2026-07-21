@@ -6,10 +6,11 @@
   <title>GPT账号管理助手 - 邮箱管理</title>
   <link rel="stylesheet" href="/styles.css?v={{APP_VERSION}}">
   <link rel="stylesheet" href="/forge-theme.css?v={{APP_VERSION}}">
+  <script src="/shared/app-shell.js?v={{APP_VERSION}}-mailbox-nav" defer></script>
   <script src="/nav-links.js?v={{APP_VERSION}}" defer></script>
   <script src="/i18n.js?v={{APP_VERSION}}" defer></script>
 </head>
-<body>
+<body data-app-section="core" data-app-current="mailboxes">
   <div class="shell mailbox-manager-shell">
     <header class="topbar app-header">
       <a class="brand" href="/" aria-label="GPT账号管理助手">
@@ -35,32 +36,7 @@
       </nav>
     </header>
 
-    <nav class="module-tabs" aria-label="功能导航">
-      <a class="module-tab" href="/">
-        <span>✓</span>
-        <strong>账号管理</strong>
-      </a>
-      <a class="module-tab" href="/dashboard.html">
-        <span>▣</span>
-        <strong>仪表盘</strong>
-      </a>
-      <a class="module-tab active" href="/mailboxes.html" aria-current="page">
-        <span>✉</span>
-        <strong>邮箱管理</strong>
-      </a>
-      <a class="module-tab" href="/refresh.html">
-        <span>↻</span>
-        <strong>凭证刷新</strong>
-      </a>
-      <a class="module-tab" href="/converter.html">
-        <span>⇄</span>
-        <strong>Session 转换</strong>
-      </a>
-      <a class="module-tab" href="/warehouse.html">
-        <span>→</span>
-        <strong>CPA 仓管</strong>
-      </a>
-    </nav>
+    <nav class="module-tabs" aria-label="功能导航" data-app-nav></nav>
 
     <main class="mailbox-manager-layout">
       <aside class="mailbox-manager-nav panel">
@@ -136,6 +112,7 @@
           <label class="mailbox-select-all"><input id="selectAllMailboxes" type="checkbox"> 全选当前页</label>
           <button id="copySelectedMailboxes" type="button">批量复制</button>
           <button id="groupSelectedMailboxes" type="button">批量设置分组</button>
+          <button id="verifySelectedMailboxes" type="button">验证邮箱</button>
           <button id="enqueueSelectedMailboxes" type="button">加入刷新队列</button>
           <button id="exportMailboxesBtn" type="button">导出邮箱 TXT</button>
           <button id="exportMailboxBackupBtn" type="button">导出 JSON 备份</button>
@@ -239,7 +216,7 @@
   <script src="/shared/mailbox-import.js?v={{APP_VERSION}}" defer></script>
   <script src="/shared/mailbox-import-ui.js?v={{APP_VERSION}}" defer></script>
   <script src="/shared/refresh-queue-model.js?v={{APP_VERSION}}" defer></script>
-  <script src="/mailboxes.js?v={{APP_VERSION}}" defer></script>
+  <script src="/mailboxes.js?v={{APP_VERSION}}-mailbox-verify" defer></script>
 </body>
 </html>
 

@@ -1,0 +1,14 @@
+# GPT账号管理助手 运行时依赖
+#
+# 核心服务基于 Python 标准库实现（http.server / urllib / imaplib / sqlite3 等），
+# 正常收信、刷新、CPA 仓管流程不需要任何第三方包。
+#
+# 唯一的可选依赖是 PySocks：仅当你在刷新 / 代理检测中使用
+# socks4 / socks5 / socks5h 代理时才需要。不用 SOCKS 代理可以完全忽略。
+#
+# 安装可选依赖：
+#   pip install -r requirements.txt
+# 或系统包：
+#   sudo apt-get install -y python3-socks
+
+PySocks>=1.7.1

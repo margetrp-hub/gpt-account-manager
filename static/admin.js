@@ -229,7 +229,6 @@ function mergeResultsToMailAssistant(rows) {
       selected: true,
       updated_at: new Date().toISOString(),
     };
-    byId.delete(`microsoft:${email.toLowerCase()}`);
     if (existing) {
       updated += 1;
     } else {

@@ -6,10 +6,11 @@
   <title>GPT账号管理助手 - 部署自检</title>
   <link rel="stylesheet" href="/styles.css?v={{APP_VERSION}}">
   <link rel="stylesheet" href="/forge-theme.css?v={{APP_VERSION}}">
+  <script src="/shared/app-shell.js?v={{APP_VERSION}}" defer></script>
   <script src="/nav-links.js?v={{APP_VERSION}}" defer></script>
   <script src="/i18n.js?v={{APP_VERSION}}" defer></script>
 </head>
-<body>
+<body data-app-section="plugin" data-app-current="health">
   <div class="shell">
     <header class="topbar app-header">
       <a class="brand" href="/" aria-label="GPT账号管理助手">
@@ -20,12 +21,12 @@
         </span>
       </a>
       <nav class="topnav" aria-label="顶部导航">
-        <a href="/">账号管理</a>
-        <a href="/dashboard.html">仪表盘</a>
-        <a href="/refresh.html">凭证刷新</a>
-        <a href="/warehouse.html">CPA 仓管</a>
+        <a class="github-link" href="https://github.com/margetrp-hub/gpt-account-manager" target="_blank" rel="noreferrer">GitHub</a>
       </nav>
     </header>
+
+    <nav class="module-tabs" aria-label="功能导航" data-app-nav></nav>
+    <nav class="plugin-tabs" aria-label="插件导航" data-plugin-nav></nav>
 
     <main class="health-grid">
       <section class="panel health-hero">

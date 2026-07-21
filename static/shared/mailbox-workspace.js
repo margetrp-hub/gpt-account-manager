@@ -23,6 +23,7 @@
       applyMailboxControlsState,
       loadServerMessages,
       sortAccounts,
+      dedupeAccounts,
       accountCategoryOptionsBase,
     } = helpers;
 
@@ -41,6 +42,23 @@
     function invalidateFilteredAccountsCache() {
       state.filteredAccountsCacheKey = "";
       state.filteredAccountsCacheRows = [];
+    }
+
+    function accountSignature(account) {
+      return [
+        account?.id || "",
+        account?.email || "",
+        account?.source || "",
+        account?.category || "",
+        account?.last_status || "",
+        account?.last_error_code || "",
+        account?.last_error_label || "",
+        account?.mail_verify_status || "",
+      ].join("|");
+    }
+
+    function accountsSignature(accounts) {
+      return (Array.isArray(accounts) ? accounts : []).map((account) => accountSignature(account)).join("~");
     }
 
     function removeCategory(name) {
@@ -73,9 +91,7 @@
 
     function filteredAccountsCacheKey() {
       return JSON.stringify([
-        state.accounts.length,
-        state.accounts[0]?.id || "",
-        state.accounts[state.accounts.length - 1]?.id || "",
+        accountsSignature(state.accounts),
         els.mailboxCategoryFilter?.value || "all",
         els.mailboxSearch?.value.trim().toLowerCase() || "",
         state.mailboxSourceFilter || "all",
@@ -107,6 +123,35 @@
     }
 
     function renderAccounts() {
+      const before = Array.isArray(state.accounts) ? state.accounts.slice() : [];
+      const beforeSignature = accountsSignature(before);
+      const deduped = typeof dedupeAccounts === "function" ? dedupeAccounts(state.accounts) : state.accounts;
+      const afterSignature = accountsSignature(deduped);
+      if (afterSignature !== beforeSignature) {
+        const selectedEmails = new Set(
+          [...state.selected]
+            .map((id) => before.find((account) => account.id === id)?.email?.toLowerCase() || "")
+            .filter(Boolean),
+        );
+        const activeEmail = (before.find((account) => account.id === state.activeMailboxId)?.email || state.activeMailboxEmail || "").toLowerCase();
+        const validIds = new Set(deduped.map((account) => account.id));
+        state.accounts = deduped;
+        state.selected = new Set(
+          deduped
+            .filter((account) => selectedEmails.has(String(account.email || "").toLowerCase()) || validIds.has(account.id) && state.selected.has(account.id))
+            .map((account) => account.id),
+        );
+        if (activeEmail) {
+          const replacement = deduped.find((account) => String(account.email || "").toLowerCase() === activeEmail);
+          state.activeMailboxId = replacement?.id || "";
+          state.activeMailboxEmail = replacement?.email || "";
+        } else if (state.activeMailboxId && !validIds.has(state.activeMailboxId)) {
+          state.activeMailboxId = "";
+          state.activeMailboxEmail = "";
+        }
+        invalidateFilteredAccountsCache();
+        saveJson(storageKeys.accounts, state.accounts);
+      }
       applyMailboxControlsState();
       const tempCount = state.accounts.filter((account) => accountSourceGroup(account) === "temp").length;
       const msCount = state.accounts.filter((account) => accountSourceGroup(account) === "microsoft").length;
@@ -224,9 +269,6 @@
       let updated = 0;
       items.forEach((item) => {
         if (!item?.id) return;
-        if (item.source === "temp" && item.email) {
-          byId.delete(`microsoft:${item.email.toLowerCase()}`);
-        }
         const existing = byId.get(item.id);
         if (existing) {
           Object.assign(existing, item, {
@@ -256,7 +298,7 @@
         state.selected.add(item.id);
         if (item.category) ensureCategory(item.category);
       });
-      state.accounts = sortAccounts(byId.values());
+      state.accounts = typeof dedupeAccounts === "function" ? dedupeAccounts(byId.values()) : sortAccounts(byId.values());
       invalidateFilteredAccountsCache();
       saveJson(storageKeys.accounts, state.accounts);
       saveJson(storageKeys.categories, state.categories);

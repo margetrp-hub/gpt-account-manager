@@ -6,10 +6,11 @@
   <title>GPT账号管理助手 - 凭证刷新</title>
   <link rel="stylesheet" href="/styles.css?v={{APP_VERSION}}">
   <link rel="stylesheet" href="/forge-theme.css?v={{APP_VERSION}}">
+  <script src="/shared/app-shell.js?v={{APP_VERSION}}" defer></script>
   <script src="/nav-links.js?v={{APP_VERSION}}" defer></script>
   <script src="/i18n.js?v={{APP_VERSION}}" defer></script>
 </head>
-<body>
+<body data-app-section="plugin" data-app-current="refresh">
   <div class="shell refresh-shell">
     <header class="topbar app-header">
       <a class="brand" href="/" aria-label="GPT账号管理助手">
@@ -35,32 +36,8 @@
       </nav>
     </header>
 
-    <nav class="module-tabs" aria-label="功能导航">
-      <a class="module-tab" href="/">
-        <span>✓</span>
-        <strong>账号管理</strong>
-      </a>
-      <a class="module-tab" href="/dashboard.html">
-        <span>▣</span>
-        <strong>仪表盘</strong>
-      </a>
-      <a class="module-tab" href="/mailboxes.html">
-        <span>✉</span>
-        <strong>邮箱管理</strong>
-      </a>
-      <a class="module-tab active" href="/refresh.html" aria-current="page">
-        <span>↻</span>
-        <strong>凭证刷新</strong>
-      </a>
-      <a class="module-tab" href="/converter.html">
-        <span>⇄</span>
-        <strong>Session 转换</strong>
-      </a>
-      <a class="module-tab" href="/warehouse.html">
-        <span>→</span>
-        <strong>CPA 仓管</strong>
-      </a>
-    </nav>
+    <nav class="module-tabs" aria-label="功能导航" data-app-nav></nav>
+    <nav class="plugin-tabs" aria-label="插件导航" data-plugin-nav></nav>
 
     <main class="refresh-layout">
       <aside class="panel refresh-source-panel">
@@ -101,7 +78,7 @@
           <span id="sourcePageText">1 / 1</span>
           <button id="sourceNext" type="button">›</button>
         </div>
-        <div id="sourceList" class="mailbox-list empty">请先在账号管理页导入邮箱</div>
+        <div id="sourceList" class="mailbox-list empty">请先在订阅管理页导入邮箱</div>
       </aside>
 
       <section class="login-console refresh-console">
@@ -139,8 +116,15 @@
                 </div>
                 <input id="taskMode" type="hidden" value="login">
                 <input id="loginStrategy" type="hidden" value="protocol">
-                <input id="loginConcurrency" type="hidden" value="1">
-                <span class="protocol-mode-pill">单账号执行</span>
+                <label class="refresh-concurrency-control">
+                  <span>执行并发</span>
+                  <select id="loginConcurrency">
+                    <option value="1">1（稳妥）</option>
+                    <option value="2">2</option>
+                    <option value="3">3</option>
+                  </select>
+                </label>
+                <span class="protocol-mode-pill">每账号独立代理出口</span>
               </div>
             </details>
 
@@ -176,7 +160,7 @@
               </summary>
               <div class="refresh-config-body">
                 <div class="credential-hint-bar">
-                  <strong>先自动匹配账号管理页已有取码资料。</strong>
+                  <strong>先自动匹配订阅管理页已有取码资料。</strong>
                   <span>这里可以快捷导入 Outlook、临时邮箱和其他邮箱资料，导入后会自动同步到账户池并可直接接码。</span>
                   <div class="credential-hint-actions">
                     <button id="openPickupImportModal" type="button">快捷导入邮箱</button>
@@ -209,20 +193,30 @@
               </summary>
               <div class="refresh-config-body phone-pool-panel">
                 <div class="phone-pool-head">
-                  <strong>手机号 + 接码 API</strong>
-                  <span>{phone} / {email} 可用</span>
+                  <strong>手机号 + 接码平台</strong>
+                  <span>HeroSMS / SMSBower / 自定义 API</span>
                 </div>
                 <div class="phone-mode-tabs" role="tablist" aria-label="手机池模式">
                   <label><input id="phoneModeBatch" name="phonePoolMode" type="radio" value="batch"><span>批量池</span></label>
                   <label><input id="phoneModeOneToOne" name="phonePoolMode" type="radio" value="one_to_one" checked><span>1 对 1 绑定</span></label>
                 </div>
                 <div class="phone-pool-form">
+                  <select id="phoneProvider" aria-label="接码平台">
+                    <option value="custom">自定义 API</option>
+                    <option value="herosms">HeroSMS</option>
+                    <option value="smsbower">SMSBower</option>
+                  </select>
                   <input id="phoneNumber" placeholder="手机号，例如 +12025550123">
-                  <input id="phoneApiUrl" placeholder="接码 API URL，例如 https://api.example.com/sms?phone={phone}">
                   <button id="addPhoneEntry" type="button">加入/更新</button>
                 </div>
+                <div class="phone-provider-details">
+                  <input id="phoneApiUrl" data-phone-provider="custom" placeholder="接码 API URL，例如 https://api.example.com/sms?phone={phone}">
+                  <input id="phoneApiKey" data-phone-provider="standard" type="password" autocomplete="off" placeholder="平台 API Key">
+                  <input id="phoneActivationId" data-phone-provider="standard" placeholder="激活订单 ID">
+                  <input id="phoneProviderEndpoint" data-phone-provider="standard" placeholder="自定义平台地址（可选）">
+                </div>
                 <div class="phone-batch-panel" id="phoneBatchPanel">
-                  <textarea id="phoneBatchText" rows="3" spellcheck="false" placeholder="批量导入：手机号----接码 API----绑定邮箱(可选)，不填邮箱进入批量池"></textarea>
+                  <textarea id="phoneBatchText" rows="3" spellcheck="false" placeholder="旧格式：手机号----接码 API----绑定邮箱。平台格式：手机号----HeroSMS/SMSBower----API Key----订单 ID----绑定邮箱(可选)----自定义地址(可选)"></textarea>
                   <button id="importPhoneBatch" type="button">批量导入</button>
                 </div>
                 <div class="phone-code-panel">
@@ -357,6 +351,7 @@
   <div id="toast" class="toast" role="status" aria-live="polite"></div>
   <script src="/shared/base.js?v={{APP_VERSION}}" defer></script>
   <script src="/shared/scheduler.js?v={{APP_VERSION}}" defer></script>
+  <script src="/shared/mailbox-account-model.js?v={{APP_VERSION}}" defer></script>
   <script src="/shared/mailbox-import.js?v={{APP_VERSION}}" defer></script>
   <script src="/shared/mailbox-import-ui.js?v={{APP_VERSION}}" defer></script>
   <script src="/shared/refresh-errors.js?v={{APP_VERSION}}" defer></script>

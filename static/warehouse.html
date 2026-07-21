@@ -6,6 +6,9 @@
     <title>GPT账号管理助手 - CPA 仓管</title>
     <meta name="theme-color" content="#2f75ff" />
     <link rel="icon" href="/favicon.svg" type="image/svg+xml" sizes="any" />
+    <script src="/shared/base.js?v={{APP_VERSION}}" defer></script>
+    <script src="/shared/app-shell.js?v={{APP_VERSION}}" defer></script>
+    <script src="/shared/warehouse-runtime.js?v={{APP_VERSION}}" defer></script>
     <style>
       :root {
         color-scheme: light;
@@ -1001,7 +1004,7 @@
   <script src="/nav-links.js?v={{APP_VERSION}}" defer></script>
   <script src="/i18n.js?v={{APP_VERSION}}" defer></script>
 </head>
-  <body>
+    <body data-app-section="core" data-app-current="warehouse">
     <main class="app">
       <header class="topbar">
         <a class="brand" href="/" aria-label="GPT账号管理助手">
@@ -1027,39 +1030,14 @@
         </nav>
       </header>
 
-      <nav class="module-tabs" aria-label="功能导航">
-        <a class="module-tab" href="/">
-          <span>✉</span>
-          <strong>账号管理</strong>
-        </a>
-        <a class="module-tab" href="/dashboard.html">
-          <span>▣</span>
-          <strong>仪表盘</strong>
-        </a>
-        <a class="module-tab" href="/mailboxes.html">
-          <span>▤</span>
-          <strong>邮箱管理</strong>
-        </a>
-        <a class="module-tab" href="/refresh.html">
-          <span>▶</span>
-          <strong>凭证刷新</strong>
-        </a>
-        <a class="module-tab" href="/converter.html">
-          <span>⇄</span>
-          <strong>Session 转换</strong>
-        </a>
-        <a class="module-tab active" href="/warehouse.html" aria-current="page">
-          <span>↻</span>
-          <strong>CPA 仓管</strong>
-        </a>
-      </nav>
+      <nav class="module-tabs" aria-label="功能导航" data-app-nav></nav>
 
       <section class="workspace">
         <section class="panel" aria-labelledby="warehouse-title">
           <div class="panel-head">
             <div>
-              <h1 id="warehouse-title">CPA 错误账号仓管</h1>
-              <p>扫描 CPA/CLIProxyAPI 错误账号，选中后直接删除。地址和密钥只保存在当前浏览器 localStorage，不写入服务器文件。</p>
+              <h1 id="warehouse-title">CPA 仓管</h1>
+              <p>扫描 CPA/CLIProxyAPI 异常账号，选中后直接删除。地址和密钥只保存在当前浏览器 localStorage，不写入服务器文件。</p>
             </div>
             <span class="status-pill idle" id="connection-status">
               <span class="status-dot"></span>
@@ -1236,12 +1214,34 @@
 
     <script>
       (() => {
-        const SETTINGS_KEY = "ctgptm-cpa-warehouse-settings";
-        const MAIL_ACCOUNTS_KEY = "ctgptm.mail.accounts";
-        const MAIL_TEMP_SETTINGS_KEY = "ctgptm.mail.tempSettings";
-        const REFRESH_SETTINGS_KEY = "ctgptm.mail.refreshSettings";
-        const WORKSPACE_KEY = "ctgptm.workspaceId";
-        const REFRESH_QUEUE_KEY = "ctgptm.mail.refreshQueue";
+        const runtime = window.GAM?.warehouseRuntime?.createWarehouseRuntime?.({
+          workspaceKey: "ctgptm.workspaceId",
+        }) || {};
+        const base = runtime.base || window.GAM?.base;
+        const legacyKeys = runtime.legacyKeys || {};
+        const scopedPrefixes = runtime.scopedPrefixes || {};
+        const workspaceId = runtime.workspaceId
+          || base?.resolveWorkspaceId?.("ctgptm.workspaceId")
+          || localStorage.getItem("ctgptm.workspaceId")
+          || `ws_${crypto.randomUUID().replace(/-/g, "")}`;
+        const LEGACY_SETTINGS_KEY = legacyKeys.legacyCpaWarehouseSettings || "ctgptm-cpa-warehouse-settings";
+        const LEGACY_MAIL_ACCOUNTS_KEY = legacyKeys.legacyMailAccounts || "ctgptm.mail.accounts";
+        const LEGACY_MAIL_TEMP_SETTINGS_KEY = legacyKeys.legacyTempSettings || "ctgptm.mail.tempSettings";
+        const SETTINGS_KEY = runtime.workspaceScopedKey
+          ? runtime.workspaceScopedKey(scopedPrefixes.cpaWarehouseSettings || "ctgptm.cpaWarehouse.settings:")
+          : `ctgptm.cpaWarehouse.settings:${workspaceId}`;
+        const MAIL_ACCOUNTS_KEY = runtime.workspaceScopedKey
+          ? runtime.workspaceScopedKey(scopedPrefixes.mailAccounts || "ctgptm.mail.accounts:")
+          : `${LEGACY_MAIL_ACCOUNTS_KEY}:${workspaceId}`;
+        const MAIL_TEMP_SETTINGS_KEY = runtime.workspaceScopedKey
+          ? runtime.workspaceScopedKey(scopedPrefixes.tempSettings || "ctgptm.mail.tempSettings:")
+          : `${LEGACY_MAIL_TEMP_SETTINGS_KEY}:${workspaceId}`;
+        const REFRESH_SETTINGS_KEY = runtime.workspaceScopedKey
+          ? runtime.workspaceScopedKey(scopedPrefixes.refreshSettings || "ctgptm.mail.refreshSettings:")
+          : `ctgptm.mail.refreshSettings:${workspaceId}`;
+        const REFRESH_QUEUE_KEY = runtime.workspaceScopedKey
+          ? runtime.workspaceScopedKey(scopedPrefixes.refreshQueue || "ctgptm.mail.refreshQueue:")
+          : `ctgptm.mail.refreshQueue:${workspaceId}`;
         const state = {
           busy: false,
           jobTimer: undefined,
@@ -1339,12 +1339,11 @@
         }
 
         function loadJson(key, fallback) {
-          try {
-            const raw = localStorage.getItem(key);
-            return raw ? JSON.parse(raw) : fallback;
-          } catch {
-            return fallback;
-          }
+          return runtime.loadJson ? runtime.loadJson(key, fallback) : fallback;
+        }
+
+        function loadScopedJson(scopedKey, legacyKey, fallback) {
+          return runtime.loadScopedJson ? runtime.loadScopedJson(scopedKey, legacyKey, fallback) : fallback;
         }
 
         function firstNonEmpty(...values) {
@@ -1506,11 +1505,10 @@
         }
 
         function loadSettings() {
-          let settings = {};
-          try {
-            settings = JSON.parse(localStorage.getItem(SETTINGS_KEY) || "{}");
-          } catch {
-            settings = {};
+          const settings = loadScopedJson(SETTINGS_KEY, LEGACY_SETTINGS_KEY, {});
+          if (!localStorage.getItem(SETTINGS_KEY) && Object.keys(settings || {}).length) {
+            if (base?.saveJson) base.saveJson(SETTINGS_KEY, settings);
+            else localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings));
           }
           elements.baseUrl.value = settings.baseUrl || elements.baseUrl.value || "http://localhost:8317";
           elements.managementKey.value = settings.managementKey || "";
@@ -1533,7 +1531,8 @@
             proxyUrl: "",
             loginStrategy: "protocol",
           };
-          localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings));
+          if (base?.saveJson) base.saveJson(SETTINGS_KEY, settings);
+          else localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings));
         }
 
         function getPayload() {
@@ -1563,25 +1562,16 @@
         }
 
         function rememberedAdminToken() {
-          return new URLSearchParams(window.location.search).get("token") || localStorage.getItem("ctgptm.admin.toolToken") || "";
-        }
-
-        function getWorkspaceId() {
-          const existing = localStorage.getItem(WORKSPACE_KEY) || "";
-          if (/^[A-Za-z0-9][A-Za-z0-9_.-]{5,63}$/.test(existing)) return existing;
-          const next = `ws_${crypto.randomUUID().replace(/-/g, "")}`;
-          localStorage.setItem(WORKSPACE_KEY, next);
-          return next;
+          return runtime.rememberedAdminToken
+            ? runtime.rememberedAdminToken(new URLSearchParams(window.location.search).get("token") || "")
+            : "";
         }
 
         function apiHeaders() {
-          const headers = {
+          return runtime.apiHeaders ? runtime.apiHeaders(new URLSearchParams(window.location.search).get("token") || "") : {
             "Content-Type": "application/json",
-            "X-Workspace-Id": getWorkspaceId(),
+            "X-Workspace-Id": workspaceId,
           };
-          const token = rememberedAdminToken();
-          if (token) headers.Authorization = `Bearer ${token}`;
-          return headers;
         }
 
         function validatePayload(payload) {
@@ -1892,13 +1882,17 @@
         }
 
         function allKnownMailAccounts() {
-          return loadJson(MAIL_ACCOUNTS_KEY, [])
+          return loadScopedJson(MAIL_ACCOUNTS_KEY, LEGACY_MAIL_ACCOUNTS_KEY, [])
             .concat(state.workspaceAccounts, state.workspaceTempAddresses, state.manualAccounts, state.manualTempAddresses);
         }
 
         function tempSettings() {
-          const mailbox = loadJson(MAIL_TEMP_SETTINGS_KEY, {});
-          const refresh = loadJson(REFRESH_SETTINGS_KEY, {});
+          const mailbox = loadScopedJson(MAIL_TEMP_SETTINGS_KEY, LEGACY_MAIL_TEMP_SETTINGS_KEY, {});
+          if (!localStorage.getItem(MAIL_TEMP_SETTINGS_KEY) && Object.keys(mailbox || {}).length) {
+            if (base?.saveJson) base.saveJson(MAIL_TEMP_SETTINGS_KEY, mailbox);
+            else localStorage.setItem(MAIL_TEMP_SETTINGS_KEY, JSON.stringify(mailbox));
+          }
+          const refresh = loadScopedJson(REFRESH_SETTINGS_KEY, "ctgptm.mail.refreshSettings", {});
           return {
             base_url: mailbox.base_url || refresh.temp_sync_api || "",
             site_password: mailbox.site_password || refresh.temp_sync_site_password || "",
@@ -2189,7 +2183,8 @@
             byKey.set(key, { ...(previous || {}), ...row });
             if (!previous) added += 1;
           });
-          localStorage.setItem(REFRESH_QUEUE_KEY, JSON.stringify([...byKey.values()]));
+          if (base?.saveJson) base.saveJson(REFRESH_QUEUE_KEY, [...byKey.values()]);
+          else localStorage.setItem(REFRESH_QUEUE_KEY, JSON.stringify([...byKey.values()]));
           setStatus(elements.status, `已加入凭证刷新队列：${rows.length} 个账号，新增 ${added} 个。`, "ok");
           addLog(`加入凭证刷新队列：${rows.length} 个账号`, "success");
           if (jump) {
