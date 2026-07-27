@@ -112,9 +112,9 @@
     function mailKey(message) {
       if (!message) return "";
       return [
-        message.source || "",
-        message.account || "",
-        message.folder || "",
+        String(message.source || "").trim().toLowerCase(),
+        String(message.account || "").trim().toLowerCase(),
+        String(message.folder || "").trim().toLowerCase(),
         message.mid || "",
         message.subject || "",
         message.received_at || "",
@@ -163,7 +163,7 @@
       const hiddenCodeCount = Math.max(0, codes.length - visibleCodes.length);
       const codeBlock = codes.length
         ? `<div class="detail-codes">${visibleCodes.map((code) => `<span>${escapeHtml(code)}</span>`).join("")}${hiddenCodeCount ? `<span class="more">+${hiddenCodeCount}</span>` : ""}</div>`
-        : '<p class="muted">这封邮件没有识别到验证码。</p>';
+        : (normalizedType === "verification" ? '<p class="muted">这封邮件没有识别到验证码。</p>' : "");
       const plainBody = normalizePlainMailBody(message.body || message.preview || htmlToPlainText(message.html_body) || "");
       const hasHtmlBody = Boolean(message.html_body);
       const bodyBlock = hasHtmlBody

@@ -145,6 +145,38 @@ class MessageStoreTests(unittest.TestCase):
         self.assertEqual(rows[0]["account"], "sqlite@example.com")
         self.assertEqual(rows[0]["subject"], "sqlite fresh")
 
+    def test_upsert_dedupes_account_case_and_keeps_new_html(self):
+        json_path = self.root / "messages.json"
+        original = {
+            "source": "microsoft",
+            "account": "user@outlook.com",
+            "folder": "inbox",
+            "mid": "message-1",
+            "subject": "Secure sign-in link",
+            "received_at": "2026-07-26T06:50:19Z",
+            "body": "plain preview",
+            "html_body": "",
+        }
+        message_store.save_messages([original], json_path, sort_key=sort_key)
+
+        message_store.upsert_messages(
+            [{
+                **original,
+                "account": "User@Outlook.com",
+                "html_body": '<p><a href="https://example.test/login">Sign in</a></p>',
+            }],
+            json_path,
+            coerce_text=coerce_text,
+            normalize_mail_type=normalize_mail_type,
+            mail_type_labels=MAIL_TYPE_LABELS,
+            sort_key=sort_key,
+        )
+
+        rows = self.load_rows(json_path)
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["account"], "User@Outlook.com")
+        self.assertIn("https://example.test/login", rows[0]["html_body"])
+
 
 if __name__ == "__main__":
     unittest.main()

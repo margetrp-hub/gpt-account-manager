@@ -1597,6 +1597,61 @@ body.mailbox-controls-collapsed .mailbox-panel {
   background: transparent;
 }
 
+.phone-mode-row,
+.phone-section-heading {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 9px;
+}
+
+.phone-mode-row {
+  min-height: 30px;
+  align-items: flex-start;
+}
+
+.phone-mode-control {
+  min-width: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  color: #526983;
+  font-size: 10.5px;
+  font-weight: 850;
+  white-space: nowrap;
+}
+
+.phone-mode-hint,
+.phone-section-heading > span {
+  min-width: 0;
+  overflow: hidden;
+  color: #64748b;
+  font-size: 11px;
+  font-weight: 750;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.phone-flow-section {
+  min-width: 0;
+  display: grid;
+  gap: 6px;
+  padding-top: 7px;
+  border-top: 1px solid rgba(142, 165, 199, 0.2);
+}
+
+.phone-provider-section {
+  padding-top: 0;
+  border-top: 0;
+}
+
+.phone-section-heading strong {
+  color: #25405f;
+  font-size: 11px;
+  font-weight: 900;
+}
+
 .phone-provider-toolbar,
 .phone-mode-tabs,
 .phone-code-panel,
@@ -1609,7 +1664,7 @@ body.mailbox-controls-collapsed .mailbox-panel {
 
 .phone-provider-toolbar {
   display: grid;
-  grid-template-columns: auto auto auto minmax(0, 1fr);
+  grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
   gap: 8px;
   min-width: 0;
@@ -1617,7 +1672,8 @@ body.mailbox-controls-collapsed .mailbox-panel {
 
 .phone-provider-select {
   min-width: 0;
-  display: inline-flex;
+  display: grid;
+  grid-template-columns: auto minmax(126px, 220px);
   align-items: center;
   gap: 5px;
   color: #526983;
@@ -1628,7 +1684,7 @@ body.mailbox-controls-collapsed .mailbox-panel {
 
 .phone-provider-select select {
   min-height: 28px;
-  min-width: 124px;
+  min-width: 0;
   padding: 3px 24px 3px 7px;
   font-size: 11px;
 }
@@ -1649,6 +1705,7 @@ body.mailbox-controls-collapsed .mailbox-panel {
 }
 
 .phone-provider-status {
+  max-width: 50%;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -1665,7 +1722,7 @@ body.mailbox-controls-collapsed .mailbox-panel {
 
 .phone-pool-form {
   display: grid;
-  grid-template-columns: minmax(190px, 0.72fr) minmax(180px, 1fr) auto;
+  grid-template-columns: minmax(180px, 1fr) minmax(160px, 0.8fr) auto;
   align-items: end;
   gap: 6px;
 }
@@ -1689,7 +1746,22 @@ body.mailbox-controls-collapsed .mailbox-panel {
   display: grid;
   align-items: center;
   gap: 5px;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.phone-provider-note,
+.phone-binding-note {
+  margin: 0;
+  color: #6a7c94;
+  font-size: 10.5px;
+  font-weight: 720;
+  line-height: 1.45;
+}
+
+.phone-provider-note code {
+  color: #315a9d;
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+  font-size: 10px;
 }
 
 .phone-provider-details label[data-phone-provider="custom"] {
@@ -1753,6 +1825,7 @@ body.mailbox-controls-collapsed .mailbox-panel {
 
 .phone-batch-import {
   overflow: hidden;
+  margin: 0;
   border: 1px solid rgba(142, 165, 199, 0.18);
   border-radius: 7px;
   background: rgba(248, 251, 255, 0.54);
@@ -1876,26 +1949,32 @@ body.mailbox-controls-collapsed .mailbox-panel {
 .phone-pool-list {
   display: grid;
   gap: 4px;
-  max-height: 148px;
+  min-height: 52px;
+  max-height: 220px;
   overflow: auto;
+  padding-right: 2px;
 }
 
 .phone-pool-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
   justify-content: space-between;
+  align-items: flex-start;
   padding: 6px 7px;
   border: 1px solid rgba(142, 165, 199, 0.18);
   border-radius: 7px;
   background: rgba(255, 255, 255, 0.68);
 }
 
-.phone-pool-row > div:first-child {
+.phone-pool-main {
   min-width: 0;
   display: grid;
   gap: 2px;
 }
 
 .phone-pool-row strong,
-.phone-pool-row em {
+.phone-pool-row em,
+.phone-pool-row small {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -1908,20 +1987,57 @@ body.mailbox-controls-collapsed .mailbox-panel {
 }
 
 .phone-pool-row em,
+.phone-pool-row small,
 .phone-pool-empty {
   color: #64748b;
   font-size: 11px;
   font-style: normal;
 }
 
+.phone-pool-row small {
+  color: #8a9ab0;
+  font-size: 10px;
+  font-style: normal;
+}
+
 .phone-pool-actions {
   flex: 0 0 auto;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  max-width: 278px;
 }
 
 .phone-pool-actions button {
+  min-height: 26px;
+  padding: 3px 6px;
+  font-size: 10.5px;
+  white-space: nowrap;
+}
+
+.phone-pool-filters {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  overflow-x: auto;
+  padding-bottom: 1px;
+}
+
+.phone-pool-filters button {
   min-height: 25px;
+  flex: 0 0 auto;
   padding: 3px 7px;
-  font-size: 11px;
+  border: 1px solid rgba(142, 165, 199, 0.24);
+  border-radius: 999px;
+  background: rgba(248, 251, 255, 0.72);
+  color: #526983;
+  font-size: 10px;
+  font-weight: 850;
+}
+
+.phone-pool-filters button.is-active {
+  border-color: rgba(37, 99, 235, 0.34);
+  background: rgba(219, 234, 254, 0.88);
+  color: #1d4ed8;
 }
 
 .queue-phone-chip {
@@ -4311,6 +4427,25 @@ body.modal-open {
   font-weight: 850;
 }
 
+.mailbox-secret.optional {
+  color: #7c8da5;
+  font-family: inherit;
+  font-weight: 700;
+}
+
+.mailbox-phone-binding {
+  display: block;
+  max-width: 100%;
+  overflow: hidden;
+  margin-top: 3px;
+  color: #2563a7;
+  font-size: 10px;
+  font-weight: 750;
+  font-variant-numeric: tabular-nums;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .mailbox-group-pill {
   display: inline-flex;
   max-width: 100%;
@@ -5075,6 +5210,29 @@ body.modal-open {
   .phone-batch-import > div,
   .credential-hint-bar {
     grid-template-columns: 1fr;
+  }
+
+  .phone-mode-row,
+  .phone-section-heading {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .phone-pool-row {
+    grid-template-columns: 1fr;
+  }
+
+  .phone-mode-hint,
+  .phone-section-heading > span,
+  .phone-provider-status {
+    max-width: none;
+    text-align: left;
+    white-space: normal;
+  }
+
+  .phone-pool-actions {
+    max-width: none;
+    justify-content: flex-start;
   }
 
   .cpa-sync-actions,

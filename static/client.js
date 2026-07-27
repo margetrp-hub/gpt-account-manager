@@ -1180,10 +1180,10 @@ function setActiveView(view) {
   if (view === "logs") {
     els.tabLogsBtn?.classList.add("active");
   } else {
-    els.tabMailBtn.classList.add("active");
-    els.tabMailBtn.setAttribute("aria-current", "page");
+    els.tabMailBtn?.classList.add("active");
+    els.tabMailBtn?.setAttribute("aria-current", "page");
   }
-  if (view !== "mail") els.tabMailBtn.removeAttribute("aria-current");
+  if (view !== "mail") els.tabMailBtn?.removeAttribute("aria-current");
   renderAll();
 }
 
@@ -1501,9 +1501,9 @@ function renderAccounts() {
 function mailKey(message) {
   if (mailboxMessageView?.mailKey) return mailboxMessageView.mailKey(message);
   return [
-    message.source || "",
-    message.account || "",
-    message.folder || "",
+    String(message.source || "").trim().toLowerCase(),
+    String(message.account || "").trim().toLowerCase(),
+    String(message.folder || "").trim().toLowerCase(),
     message.mid || "",
     message.subject || "",
     message.received_at || "",
@@ -1753,7 +1753,7 @@ function renderDetail(message) {
   const hiddenCodeCount = Math.max(0, codes.length - visibleCodes.length);
   const codeBlock = codes.length
     ? `<div class="detail-codes">${visibleCodes.map((code) => `<span>${escapeHtml(code)}</span>`).join("")}${hiddenCodeCount ? `<span class="more">+${hiddenCodeCount}</span>` : ""}</div>`
-    : `<p class="muted">这封邮件没有识别到验证码。</p>`;
+    : (normalizedType === "verification" ? `<p class="muted">这封邮件没有识别到验证码。</p>` : "");
   const plainBody = normalizePlainMailBody(message.body || message.preview || htmlToPlainText(message.html_body) || "");
   const hasHtmlBody = Boolean(message.html_body);
   const bodyBlock = hasHtmlBody
@@ -1821,7 +1821,7 @@ function payloadForSync(scope = resolvedMessageScope()) {
         email: account.email,
         jwt: account.jwt,
         base_url: normalizeTempWorkerUrl(account.base_url || els.importTempApi.value || DEFAULT_TEMP_WORKER_URL),
-        site_password: account.site_password,
+        site_password: tempSitePasswordForAccount(account),
         category: account.category,
       })) : [],
     accounts: includeMicrosoft ? targets
@@ -1886,7 +1886,7 @@ function accountPayloadForMessage(message) {
         email: account.email,
         jwt: account.jwt,
         base_url: normalizeTempWorkerUrl(account.base_url || els.importTempApi.value || DEFAULT_TEMP_WORKER_URL),
-        site_password: account.site_password,
+        site_password: tempSitePasswordForAccount(account),
         category: account.category,
       }],
       generic_accounts: [],
@@ -2101,7 +2101,7 @@ function loginPayload(row) {
         email: item.email,
         jwt: item.jwt,
         base_url: normalizeTempWorkerUrl(item.base_url || els.importTempApi.value || DEFAULT_TEMP_WORKER_URL),
-        site_password: item.site_password,
+        site_password: tempSitePasswordForAccount(item),
       })),
     generic_accounts: sameEmail
       .filter((item) => item.source === "generic")
@@ -2111,6 +2111,10 @@ function loginPayload(row) {
 
 function compactObject(value) {
   return Object.fromEntries(Object.entries(value).filter(([, item]) => item !== undefined && item !== null && item !== ""));
+}
+
+function tempSitePasswordForAccount(account) {
+  return String(account?.site_password || els.importTempSitePassword?.value || "").trim();
 }
 
 function epochSecondsFromValue(value) {
@@ -3286,16 +3290,16 @@ function groupAccountsByImportDate() {
   toast(result.message);
 }
 
-els.importMailboxBtn.addEventListener("click", () => openImportDialog("auto"));
+els.importMailboxBtn?.addEventListener("click", () => openImportDialog("auto"));
 els.mailboxControlsToggle?.addEventListener("click", () => toggleMailboxControls());
 els.tabImportBtn?.addEventListener("click", () => openImportDialog("auto"));
 els.tabLogsBtn?.addEventListener("click", () => setActiveView("logs"));
-els.tabMailBtn.addEventListener("click", () => setActiveView("mail"));
-els.importServiceSelect.addEventListener("change", updateImportDialogCopy);
-els.importFile.addEventListener("change", () => readTextFileToTextarea(els.importFile, els.importText));
-els.closeImportModal.addEventListener("click", closeImportDialog);
-els.cancelImportBtn.addEventListener("click", closeImportDialog);
-els.importModal.addEventListener("click", (event) => {
+els.tabMailBtn?.addEventListener("click", () => setActiveView("mail"));
+els.importServiceSelect?.addEventListener("change", updateImportDialogCopy);
+els.importFile?.addEventListener("change", () => readTextFileToTextarea(els.importFile, els.importText));
+els.closeImportModal?.addEventListener("click", closeImportDialog);
+els.cancelImportBtn?.addEventListener("click", closeImportDialog);
+els.importModal?.addEventListener("click", (event) => {
   if (event.target === els.importModal) closeImportDialog();
 });
 els.groupModal?.addEventListener("click", (event) => {

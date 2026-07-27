@@ -18,9 +18,9 @@ def _iso_now() -> str:
 
 def message_key(message: dict[str, Any]) -> str:
     return "|".join([
-        str(message.get("source", "")),
-        str(message.get("account", "")),
-        str(message.get("folder", "")),
+        str(message.get("source", "")).strip().lower(),
+        str(message.get("account", "")).strip().lower(),
+        str(message.get("folder", "")).strip().lower(),
         str(message.get("mid", "")),
         str(message.get("subject", "")),
         str(message.get("received_at", "")),

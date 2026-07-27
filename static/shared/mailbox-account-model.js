@@ -225,6 +225,21 @@
       return text.length >= 20 && !/^https?:\/\//i.test(text);
     }
 
+    function isMicrosoftAccountMarker(account) {
+      const source = String(account?.source || "").trim().toLowerCase();
+      const id = String(account?.id || "").trim().toLowerCase();
+      const service = String(account?.service || "").trim().toLowerCase();
+      return source === "microsoft"
+        || id.startsWith("microsoft:")
+        || /outlook|microsoft|office\s*365/.test(service);
+    }
+
+    function hasMicrosoftOAuthCredentials(account) {
+      const clientId = String(account?.client_id || account?.clientId || "").trim();
+      const refreshToken = String(account?.refresh_token || account?.refreshToken || "").trim();
+      return Boolean(clientId && refreshToken);
+    }
+
     function normalizeCategoryValue(value) {
       const clean = String(value || "").trim();
       if (treatDefaultCategoryAsEmpty && clean === "默认") return "";
@@ -256,23 +271,40 @@
           selected: account.selected !== false,
         };
       }
-      if (
-        account.source === "temp"
+      const legacyMicrosoftCredential = account.source === "temp"
         && looksLikeMicrosoftClientId(account.category)
-        && looksLikeMicrosoftRefreshToken(account.site_password)
-      ) {
+        && looksLikeMicrosoftRefreshToken(account.site_password);
+      const clientId = String(
+        account.client_id
+        || account.clientId
+        || (legacyMicrosoftCredential ? account.category : "")
+        || "",
+      );
+      const refreshToken = String(
+        account.refresh_token
+        || account.refreshToken
+        || (legacyMicrosoftCredential ? account.site_password : "")
+        || "",
+      );
+      const explicitGeneric = account.source === "generic" || String(account.id || "").startsWith("generic:");
+      const hasMicrosoftOAuth = hasMicrosoftOAuthCredentials({ client_id: clientId, refresh_token: refreshToken });
+      const isMicrosoft = !explicitGeneric && (
+        isMicrosoftAccountMarker(account)
+        || hasMicrosoftOAuth
+      );
+      if (isMicrosoft) {
         return {
           ...account,
           id: `microsoft:${email.toLowerCase()}`,
           source: "microsoft",
           service: serviceLabels.microsoft,
           email,
-          password: String(account.jwt || account.password || ""),
-          client_id: String(account.category || ""),
-          refresh_token: String(account.site_password || ""),
-          jwt: "",
-          site_password: "",
-          category: "",
+          password: String(account.password || (legacyMicrosoftCredential ? account.jwt : "") || ""),
+          client_id: clientId,
+          refresh_token: refreshToken,
+          jwt: legacyMicrosoftCredential ? "" : String(account.jwt || ""),
+          site_password: legacyMicrosoftCredential ? "" : String(account.site_password || account.sitePassword || ""),
+          category: legacyMicrosoftCredential ? "" : normalizedCategory,
           selected: account.selected !== false,
         };
       }
@@ -334,6 +366,7 @@
       looksLikeJwt,
       looksLikeMicrosoftClientId,
       looksLikeMicrosoftRefreshToken,
+      hasMicrosoftOAuthCredentials,
       normalizeStoredAccount,
       normalizeStoredAccounts,
       dedupeAccounts,

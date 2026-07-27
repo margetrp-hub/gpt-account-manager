@@ -26,6 +26,7 @@
       addLog,
       toast,
       renderRefreshStateViews,
+      tempSitePasswordForAccount,
     } = helpers;
 
     const {
@@ -176,7 +177,7 @@
             email: account.email,
             jwt: account.jwt,
             base_url: account.base_url,
-            site_password: account.site_password,
+            site_password: tempSitePasswordForAccount(account),
           }],
           accounts: [],
           generic_accounts: [],

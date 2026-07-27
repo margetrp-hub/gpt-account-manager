@@ -9,11 +9,13 @@ const LEGACY_STORAGE_KEYS = {
   accounts: sharedLegacyKeys.legacyMailAccounts || "ctgptm.mail.accounts",
   categories: sharedLegacyKeys.legacyMailCategories || "ctgptm.mail.categories",
   tempSettings: sharedLegacyKeys.legacyTempSettings || "ctgptm.mail.tempSettings",
+  phonePool: sharedLegacyKeys.legacyPhonePool || "ctgptm.mail.phonePool",
 };
 const STORAGE_KEYS = {
   accounts: `${LEGACY_STORAGE_KEYS.accounts}:${workspaceId}`,
   categories: `${LEGACY_STORAGE_KEYS.categories}:${workspaceId}`,
   tempSettings: `${LEGACY_STORAGE_KEYS.tempSettings}:${workspaceId}`,
+  phonePool: `${LEGACY_STORAGE_KEYS.phonePool}:${workspaceId}`,
   workspaceId: WORKSPACE_ID_STORAGE_KEY,
 };
 
@@ -127,7 +129,7 @@ function migrateLegacyStorageKeys(names) {
   });
 }
 
-migrateLegacyStorageKeys(["accounts", "categories"]);
+migrateLegacyStorageKeys(["accounts", "categories", "phonePool"]);
 
 const mailboxAccountModel = window.GAM?.mailboxAccountModel?.createMailboxAccountModel?.({
   defaultTempWorkerUrl: "",
@@ -138,9 +140,11 @@ const mailboxAccountModel = window.GAM?.mailboxAccountModel?.createMailboxAccoun
 });
 const initialStoredAccounts = loadJson(STORAGE_KEYS.accounts, []);
 const initialStoredCategories = loadJson(STORAGE_KEYS.categories, []);
+const initialStoredPhonePool = loadJson(STORAGE_KEYS.phonePool, []);
 const state = {
   accounts: normalizeStoredAccounts(initialStoredAccounts),
   categories: normalizeStoredCategories(initialStoredCategories),
+  phonePool: normalizePhonePool(initialStoredPhonePool),
   selected: new Set(),
   page: 1,
   sourceView: "all",
@@ -603,6 +607,20 @@ function accountHasError(account) {
   return ["error", "failed"].includes(status) || Boolean(account.last_error || account.last_error_code || account.last_error_label);
 }
 
+function normalizePhonePool(value) {
+  if (!Array.isArray(value)) return [];
+  return value.map((item) => ({
+    phone: String(item?.phone || "").trim(),
+    account_email: String(item?.account_email || item?.accountEmail || "").trim().toLowerCase(),
+  })).filter((item) => item.phone && item.account_email);
+}
+
+function phoneBindingForAccount(account) {
+  const email = String(account?.email || "").trim().toLowerCase();
+  if (!email) return "";
+  return state.phonePool.find((item) => item.account_email === email)?.phone || "";
+}
+
 function accountSignature(account) {
   return [
     account?.id || "",
@@ -631,11 +649,15 @@ function accountIsBanned(account) {
   return /banned|deactivated|disabled|suspended|封禁|停用|禁用|已停用/.test(text);
 }
 
-function secretPreview(value, empty = "未填写") {
+function secretPreview(value, empty = "未填写", options = {}) {
   const text = String(value || "");
-  if (!text) return `<span class="mailbox-secret missing">${empty}</span>`;
+  if (!text) return `<span class="mailbox-secret ${options.optional ? "optional" : "missing"}">${empty}</span>`;
   if (isMaskedSecret(text)) return `<span class="mailbox-secret masked">${escapeHtml(text)}</span>`;
   return `<span class="mailbox-secret">${escapeHtml(text.length > 18 ? `${text.slice(0, 8)}...${text.slice(-6)}` : text)}</span>`;
+}
+
+function tempSitePasswordForAccount(account) {
+  return String(account?.site_password || els.tempSitePassword?.value || "").trim();
 }
 
 function csvPartsFlexible(line) {
@@ -1039,7 +1061,8 @@ function renderTable() {
         : account.source === "generic"
           ? account.imap_host || account.pop3_host || account.mode
           : account.refresh_token;
-      const passwordValue = account.source === "temp" ? account.site_password : account.password;
+      const passwordValue = account.source === "temp" ? tempSitePasswordForAccount(account) : account.password;
+      const boundPhone = phoneBindingForAccount(account);
       const group = account.category || "未分组";
       const badgeClass = account.source === "microsoft" ? "ms" : account.source === "generic" ? "generic" : "temp";
       return `
@@ -1048,8 +1071,9 @@ function renderTable() {
           <td>${start + index + 1}</td>
           <td>
             <strong class="mailbox-email">${escapeHtml(account.email)}${hasError ? `<em>（错误）</em>` : ""}</strong>
+            ${boundPhone ? `<span class="mailbox-phone-binding">\u7ed1\u5b9a\u624b\u673a ${escapeHtml(boundPhone)}</span>` : ""}
           </td>
-          <td>${secretPreview(passwordValue, account.source === "temp" ? "无站点密钥" : "未保存密码/令牌")}</td>
+          <td>${secretPreview(passwordValue, account.source === "temp" ? "未配置（可选）" : "未保存密码/令牌", { optional: account.source === "temp" })}</td>
           <td><span class="mailbox-group-pill">${escapeHtml(group)}</span></td>
           <td>${secretPreview(tokenValue, account.source === "generic" ? "缺少主机/模式" : "缺少令牌")}</td>
           <td><span class="source-badge ${badgeClass}">${escapeHtml(accountKindLabel(account))}</span></td>
@@ -1123,7 +1147,7 @@ function mailboxFetchPayload(account) {
         email: account.email,
         jwt: account.jwt,
         base_url: account.base_url,
-        site_password: account.site_password,
+        site_password: tempSitePasswordForAccount(account),
       }],
       generic_accounts: [],
     };
@@ -1686,3 +1710,9 @@ if (JSON.stringify(initialStoredCategories) !== JSON.stringify(state.categories)
   scheduleSaveJson(STORAGE_KEYS.categories, state.categories, 0);
 }
 syncMailboxes({ quiet: true });
+
+window.addEventListener("storage", (event) => {
+  if (event.key !== STORAGE_KEYS.phonePool) return;
+  state.phonePool = normalizePhonePool(loadJson(STORAGE_KEYS.phonePool, []));
+  renderTable();
+});

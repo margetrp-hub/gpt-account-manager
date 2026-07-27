@@ -187,56 +187,75 @@
               <summary>
                 <span>
                   <strong>长效手机池</strong>
-                  <em>已绑定号码 / 平台订单</em>
+                  <em>平台订单 / 1 对 1 绑定</em>
                 </span>
                 <b>接码</b>
               </summary>
               <div class="refresh-config-body phone-pool-panel">
-                <div class="phone-provider-toolbar">
-                  <div class="phone-mode-tabs" role="tablist" aria-label="手机池模式">
-                    <label><input id="phoneModeOneToOne" name="phonePoolMode" type="radio" value="one_to_one" checked><span>1 对 1</span></label>
-                    <label><input id="phoneModeBatch" name="phonePoolMode" type="radio" value="batch"><span>批量池</span></label>
+                <div class="phone-mode-row">
+                  <div class="phone-mode-control">
+                    <span>使用方式</span>
+                    <div class="phone-mode-tabs" role="tablist" aria-label="手机池模式">
+                      <label><input id="phoneModeOneToOne" name="phonePoolMode" type="radio" value="one_to_one" checked><span>1 对 1</span></label>
+                      <label><input id="phoneModeBatch" name="phonePoolMode" type="radio" value="batch"><span>批量池</span></label>
+                    </div>
                   </div>
-                  <label class="phone-provider-select">
-                    <span>接码平台</span>
-                    <select id="phoneProvider" aria-label="接码平台">
-                      <option value="custom">自定义 API</option>
-                      <option value="herosms">HeroSMS</option>
-                      <option value="smsbower">SMSBower</option>
-                    </select>
-                  </label>
-                  <div class="phone-provider-actions" data-phone-provider="standard">
-                    <button id="verifyPhoneProvider" type="button">验证 API</button>
-                    <button id="syncPhoneProviderActivations" type="button">同步订单</button>
+                  <span id="phoneModeHint" class="phone-mode-hint">选择刷新队列中的一个账号后绑定手机号。</span>
+                </div>
+                <section class="phone-flow-section phone-provider-section">
+                  <div class="phone-section-heading">
+                    <strong>接码平台</strong>
+                    <span id="phoneProviderStatus" class="phone-provider-status" aria-live="polite"></span>
                   </div>
-                  <span id="phoneProviderStatus" class="phone-provider-status" aria-live="polite"></span>
-                </div>
-                <div class="phone-provider-details">
-                  <label data-phone-provider="custom">
-                    <span>接码 API</span>
-                    <input id="phoneApiUrl" placeholder="https://api.example.com/sms?phone={phone}">
-                  </label>
-                  <label data-phone-provider="standard">
-                    <span>API Key</span>
-                    <input id="phoneApiKey" type="password" autocomplete="off" placeholder="平台 API Key">
-                  </label>
-                  <label data-phone-provider="standard">
-                    <span>订单 ID</span>
-                    <input id="phoneActivationId" placeholder="激活订单 ID">
-                  </label>
-                  <label data-phone-provider="standard">
-                    <span>接口地址</span>
-                    <input id="phoneProviderEndpoint" placeholder="内置地址；需要时覆盖">
-                  </label>
-                </div>
-                <div class="phone-pool-form">
-                  <label>
-                    <span>手机号</span>
-                    <input id="phoneNumber" placeholder="+12025550123">
-                  </label>
-                  <span id="phoneBindingTarget" class="phone-binding-target">未选中刷新账号</span>
-                  <button id="addPhoneEntry" type="button">保存号码</button>
-                </div>
+                  <div class="phone-provider-toolbar">
+                    <label class="phone-provider-select">
+                      <span>平台</span>
+                      <select id="phoneProvider" aria-label="接码平台">
+                        <option value="custom">自定义 API</option>
+                        <option value="herosms">HeroSMS</option>
+                        <option value="smsbower">SMSBower</option>
+                      </select>
+                    </label>
+                    <div class="phone-provider-actions" data-phone-provider="standard">
+                      <button id="verifyPhoneProvider" type="button">验证连接</button>
+                      <button id="syncPhoneProviderActivations" type="button">同步活跃订单</button>
+                    </div>
+                  </div>
+                  <div class="phone-provider-details">
+                    <label data-phone-provider="custom">
+                      <span>取码 API 地址</span>
+                      <input id="phoneApiUrl" placeholder="https://api.example.com/sms?phone={phone}">
+                    </label>
+                    <label data-phone-provider="standard">
+                      <span>API Key</span>
+                      <input id="phoneApiKey" type="password" autocomplete="off" placeholder="HeroSMS / SMSBower API Key">
+                    </label>
+                    <label data-phone-provider="standard">
+                      <span>兼容接口地址（可选）</span>
+                      <input id="phoneProviderEndpoint" placeholder="留空使用平台默认地址">
+                    </label>
+                  </div>
+                  <p class="phone-provider-note" data-phone-provider="standard">仅同步和管理你已有的活跃订单，不会在此创建、购买或续费号码。</p>
+                  <p class="phone-provider-note" data-phone-provider="custom">地址支持 <code>{phone}</code>、<code>{email}</code>、<code>{since}</code> 与 <code>{ts}</code> 占位符。</p>
+                </section>
+                <section class="phone-flow-section phone-number-section">
+                  <div class="phone-section-heading">
+                    <strong>号码与账号绑定</strong>
+                    <span id="phoneBindingTarget" class="phone-binding-target">未选中刷新账号</span>
+                  </div>
+                  <div class="phone-pool-form">
+                    <label>
+                      <span>手机号</span>
+                      <input id="phoneNumber" placeholder="+12025550123">
+                    </label>
+                    <label data-phone-provider="standard">
+                      <span>订单 ID</span>
+                      <input id="phoneActivationId" placeholder="已有激活订单 ID">
+                    </label>
+                    <button id="addPhoneEntry" type="button">保存绑定</button>
+                  </div>
+                  <p class="phone-binding-note">1 对 1 会绑定到当前勾选的刷新账号；批量池仅保存空闲号码，执行时按队列顺序分配。</p>
+                </section>
                 <div class="phone-code-panel" hidden>
                   <div>
                     <strong id="phoneCodeAccount">未选中队列账号</strong>
@@ -246,15 +265,27 @@
                   <button id="pollSelectedPhone" type="button">为选中账号取码</button>
                 </div>
                 <details class="phone-batch-import" id="phoneBatchPanel">
-                  <summary>批量导入</summary>
+                  <summary>批量导入已有号码</summary>
                   <div>
                     <textarea id="phoneBatchText" rows="3" spellcheck="false" placeholder="手机号----接码 API----绑定邮箱；或 手机号----HeroSMS/SMSBower----API Key----订单 ID----绑定邮箱(可选)----接口地址(可选)"></textarea>
                     <button id="importPhoneBatch" type="button">导入</button>
                   </div>
                 </details>
-                <div id="phonePoolList" class="phone-pool-list">
-                  <div class="phone-pool-empty">还没有长效手机。</div>
-                </div>
+                <section class="phone-flow-section phone-orders-section">
+                  <div class="phone-section-heading">
+                    <strong>号码与订单</strong>
+                    <span id="phonePoolSummary">还没有同步号码</span>
+                  </div>
+                  <div id="phonePoolFilters" class="phone-pool-filters" role="toolbar" aria-label="手机号码筛选">
+                    <button type="button" data-phone-filter="all" class="is-active">全部</button>
+                    <button type="button" data-phone-filter="bound">已绑定</button>
+                    <button type="button" data-phone-filter="available">可分配</button>
+                    <button type="button" data-phone-filter="closed">已结束</button>
+                  </div>
+                  <div id="phonePoolList" class="phone-pool-list">
+                    <div class="phone-pool-empty">还没有长效手机。</div>
+                  </div>
+                </section>
               </div>
             </details>
           </div>

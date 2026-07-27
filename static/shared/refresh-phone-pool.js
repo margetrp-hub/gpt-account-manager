@@ -61,8 +61,14 @@
           provider_status: String(item?.provider_status || item?.providerStatus || ""),
           provider_service: String(item?.provider_service || item?.providerService || ""),
           provider_country: String(item?.provider_country || item?.providerCountry || ""),
+          provider_operator: String(item?.provider_operator || item?.providerOperator || ""),
+          provider_cost: String(item?.provider_cost || item?.providerCost || ""),
+          provider_currency: String(item?.provider_currency || item?.providerCurrency || ""),
+          provider_expires_at: String(item?.provider_expires_at || item?.providerExpiresAt || ""),
+          provider_can_receive_more: item?.provider_can_receive_more ?? item?.providerCanReceiveMore ?? null,
           provider_created_at: String(item?.provider_created_at || item?.providerCreatedAt || ""),
           provider_synced_at: String(item?.provider_synced_at || item?.providerSyncedAt || ""),
+          provider_terminal: Boolean(item?.provider_terminal || item?.providerTerminal),
           status: String(item?.status || "idle"),
         };
       }).filter(Boolean);
@@ -86,8 +92,14 @@
         provider_status: item.provider_status || "",
         provider_service: item.provider_service || "",
         provider_country: item.provider_country || "",
+        provider_operator: item.provider_operator || "",
+        provider_cost: item.provider_cost || "",
+        provider_currency: item.provider_currency || "",
+        provider_expires_at: item.provider_expires_at || "",
+        provider_can_receive_more: item.provider_can_receive_more,
         provider_created_at: item.provider_created_at || "",
         provider_synced_at: item.provider_synced_at || "",
+        provider_terminal: Boolean(item.provider_terminal),
       }));
     }
 
@@ -112,7 +124,12 @@
       const existing = phoneEntryForRow(row);
       if (existing) return existing;
       const used = new Set(state.queue.map((item) => item.phone_id).filter(Boolean));
-      const entry = state.phonePool.find((item) => item.mode === "batch" && !accountEmailKey(item.account_email) && !used.has(item.id));
+      const entry = state.phonePool.find((item) => (
+        item.mode === "batch"
+        && !item.provider_terminal
+        && !accountEmailKey(item.account_email)
+        && !used.has(item.id)
+      ));
       if (!entry) return null;
       row.phone_id = entry.id;
       row.phone_number = entry.phone;
@@ -155,7 +172,45 @@
       const suffix = activation ? ` #${activation.slice(-6)}` : "";
       const service = String(item.provider_service || "").trim();
       const country = String(item.provider_country || "").trim();
-      return [phoneProviderLabel(item.provider), service, country].filter(Boolean).join(" · ") + suffix;
+      const operator = String(item.provider_operator || "").trim();
+      return [phoneProviderLabel(item.provider), service, country, operator].filter(Boolean).join(" · ") + suffix;
+    }
+
+    function isTerminalPhoneOrder(item) {
+      if (item?.provider_terminal) return true;
+      const status = String(item?.provider_status || "").toUpperCase();
+      return /CANCEL|FINISH|COMPLETE|CLOSED|REFUND|STATUS_8|\b8\b/.test(status);
+    }
+
+    function activationStatusLabel(value) {
+      const raw = String(value || "").trim();
+      const normalized = raw.toUpperCase();
+      const labels = {
+        STATUS_WAIT_CODE: "等待验证码",
+        STATUS_WAIT_RESEND: "等待下一条短信",
+        STATUS_WAIT_RETRY: "可请求重试",
+        STATUS_OK: "已收到验证码",
+        STATUS_CANCEL: "订单已取消",
+        STATUS_CANCELLED: "订单已取消",
+        STATUS_FINISH: "订单已完成",
+        STATUS_FINISHED: "订单已完成",
+        ACCESS_READY: "号码已就绪",
+      };
+      return labels[normalized] || (raw ? `订单状态 ${raw}` : "等待取码");
+    }
+
+    function hasMorePhoneSms(item) {
+      const value = item?.provider_can_receive_more;
+      if (value === null || value === undefined || value === "") return true;
+      if (typeof value === "string") return !["0", "false", "no"].includes(value.trim().toLowerCase());
+      return ![false, 0].includes(value);
+    }
+
+    function phoneItemMatchesFilter(item, filter) {
+      if (filter === "bound") return Boolean(item.account_email);
+      if (filter === "available") return !item.account_email && !isTerminalPhoneOrder(item);
+      if (filter === "closed") return isTerminalPhoneOrder(item);
+      return true;
     }
 
     function renderPhoneBindingList() {
@@ -188,28 +243,66 @@
 
     function renderPhonePool() {
       if (!els.phonePoolList) return;
-      if (!state.phonePool.length) {
-        els.phonePoolList.innerHTML = '<div class="phone-pool-empty">还没有长效手机。</div>';
+      const allItems = [...state.phonePool].sort((a, b) => {
+        const terminalDelta = Number(isTerminalPhoneOrder(a)) - Number(isTerminalPhoneOrder(b));
+        if (terminalDelta) return terminalDelta;
+        const boundDelta = Number(Boolean(b.account_email)) - Number(Boolean(a.account_email));
+        if (boundDelta) return boundDelta;
+        return String(a.phone || "").localeCompare(String(b.phone || ""));
+      });
+      const filter = ["all", "bound", "available", "closed"].includes(state.phonePoolFilter) ? state.phonePoolFilter : "all";
+      const items = allItems.filter((item) => phoneItemMatchesFilter(item, filter));
+      const counts = {
+        all: allItems.length,
+        bound: allItems.filter((item) => Boolean(item.account_email)).length,
+        available: allItems.filter((item) => !item.account_email && !isTerminalPhoneOrder(item)).length,
+        closed: allItems.filter(isTerminalPhoneOrder).length,
+      };
+      if (els.phonePoolSummary) {
+        els.phonePoolSummary.textContent = allItems.length
+          ? `共 ${counts.all} 个，已绑定 ${counts.bound}，可分配 ${counts.available}`
+          : "还没有同步号码";
+      }
+      if (els.phonePoolFilters) {
+        els.phonePoolFilters.querySelectorAll("[data-phone-filter]").forEach((button) => {
+          const key = button.dataset.phoneFilter;
+          button.classList.toggle("is-active", key === filter);
+          button.textContent = `${({ all: "全部", bound: "已绑定", available: "可分配", closed: "已结束" })[key]} ${counts[key] || 0}`;
+        });
+      }
+      if (!items.length) {
+        els.phonePoolList.innerHTML = `<div class="phone-pool-empty">${allItems.length ? "当前筛选下没有号码。" : "还没有长效手机。"}</div>`;
         renderPhoneBindingList();
         renderSelectedPhoneCodePanel();
         return;
       }
-      els.phonePoolList.innerHTML = state.phonePool.map((item) => {
+      els.phonePoolList.innerHTML = items.map((item) => {
         const status = item.last_code
           ? `最近验证码 ${item.last_code}${item.last_checked_at ? ` · ${formatPhoneTime(item.last_checked_at)}` : ""}`
-          : (item.status === "running" ? "正在取码" : (item.status === "error" ? "取码失败" : (item.provider_status || "等待取码")));
+          : (isTerminalPhoneOrder(item) ? "订单已结束" : (item.status === "running" ? "正在取码" : (item.status === "error" ? "取码失败" : activationStatusLabel(item.provider_status))));
         const mode = item.mode === "bound" ? "1对1" : "批量";
         const bound = item.account_email ? item.account_email : "未绑定账号";
+        const canManageActivation = item.provider !== "custom" && item.activation_id && !isTerminalPhoneOrder(item);
+        const canRequestSms = canManageActivation && hasMorePhoneSms(item);
+        const actionBusy = Boolean(item.activation_action);
+        const metadata = [phoneProviderSummary(item), mode, bound, status].filter(Boolean).join(" · ");
+        const detail = [
+          item.provider_cost ? `${item.provider_cost}${item.provider_currency ? ` ${item.provider_currency}` : ""}` : "",
+          item.provider_expires_at ? `到期 ${item.provider_expires_at}` : "",
+          item.last_message || "",
+        ].filter(Boolean).join(" · ");
         return `
           <div class="phone-pool-row" data-id="${escapeHtml(item.id)}">
-            <div>
+            <div class="phone-pool-main">
               <strong>${escapeHtml(item.phone)}</strong>
-              <em>${escapeHtml(mode)} · ${escapeHtml(phoneProviderSummary(item))} · ${escapeHtml(bound)} · ${escapeHtml(status)}</em>
+              <em>${escapeHtml(metadata)}</em>
+              ${detail ? `<small>${escapeHtml(detail)}</small>` : ""}
             </div>
             <div class="phone-pool-actions">
-              <button class="bind-phone" type="button">绑定选中</button>
-              <button class="poll-phone" type="button"${item.polling ? " disabled" : ""}>${item.polling ? "取码中" : "取码"}</button>
-              <button class="remove-phone danger" type="button">删除</button>
+              <button class="bind-phone" type="button"${isTerminalPhoneOrder(item) || actionBusy ? " disabled" : ""}>绑定</button>
+              <button class="poll-phone" type="button"${item.polling || isTerminalPhoneOrder(item) || actionBusy ? " disabled" : ""}>${item.polling ? "取码中" : "取码"}</button>
+              ${canRequestSms ? `<button class="request-phone-sms" type="button"${actionBusy ? " disabled" : ""}>${item.activation_action === "resend" ? "请求中" : "下一条"}</button>` : ""}${canManageActivation ? `<button class="complete-phone-activation" type="button"${actionBusy ? " disabled" : ""}>完成</button><button class="cancel-phone-activation danger" type="button"${actionBusy ? " disabled" : ""}>取消</button>` : ""}
+              <button class="remove-phone danger" type="button"${actionBusy ? " disabled" : ""}>删除</button>
             </div>
           </div>
         `;
@@ -287,10 +380,23 @@
       if (els.phoneApiUrl) {
         els.phoneApiUrl.placeholder = "接码 API URL，例如 https://api.example.com/sms?phone={phone}";
       }
+      const batchMode = currentPhoneMode() === "batch";
+      if (els.phoneBatchPanel) {
+        els.phoneBatchPanel.hidden = !batchMode;
+        if (!batchMode) els.phoneBatchPanel.open = false;
+      }
+      if (els.phoneModeHint) {
+        els.phoneModeHint.textContent = batchMode
+          ? "号码先进入空闲池，刷新任务按队列顺序分配。"
+          : "选择刷新队列中的一个账号后绑定手机号。";
+      }
+      if (els.addPhoneEntry) {
+        els.addPhoneEntry.textContent = batchMode ? "加入批量池" : "保存绑定";
+      }
       if (provider === "custom") {
-        setPhoneProviderStatus("模板接口", "neutral");
+        setPhoneProviderStatus("按手机号查询短信", "neutral");
       } else {
-        setPhoneProviderStatus("内置兼容接口", "neutral");
+        setPhoneProviderStatus("内置 SMS-Activate 兼容接口", "neutral");
       }
     }
 
@@ -320,11 +426,6 @@
       } finally {
         if (els.verifyPhoneProvider) els.verifyPhoneProvider.disabled = false;
       }
-    }
-
-    function activationStatusLabel(value) {
-      const raw = String(value || "").trim();
-      return raw ? `订单状态 ${raw}` : "已同步订单";
     }
 
     async function syncPhoneProviderActivations() {
@@ -362,15 +463,21 @@
             activation_id: activationId,
             endpoint: connection.endpoint,
             account_email: existing?.account_email || "",
-            provider_status: activationStatusLabel(remote.status),
+            provider_status: String(remote.status || "").trim(),
             provider_service: String(remote.service || "").trim(),
             provider_country: String(remote.country || "").trim(),
+            provider_operator: String(remote.operator || "").trim(),
+            provider_cost: String(remote.cost || "").trim(),
+            provider_currency: String(remote.currency || "").trim(),
+            provider_expires_at: String(remote.expires_at || "").trim(),
+            provider_can_receive_more: remote.can_receive_more ?? null,
             provider_created_at: String(remote.created_at || "").trim(),
             provider_synced_at: data.checked_at || new Date().toISOString(),
+            provider_terminal: isTerminalPhoneOrder({ provider_status: remote.status }),
             status: existing?.status || "idle",
-            last_code: existing?.last_code || "",
-            last_message: existing?.last_message || "",
-            last_checked_at: existing?.last_checked_at || "",
+            last_code: String(remote.code || existing?.last_code || ""),
+            last_message: String(remote.message || existing?.last_message || ""),
+            last_checked_at: remote.code ? (data.checked_at || new Date().toISOString()) : (existing?.last_checked_at || ""),
           };
           if (existing) {
             Object.assign(existing, next);
@@ -392,6 +499,53 @@
         toast(details.error || "订单同步失败");
       } finally {
         if (els.syncPhoneProviderActivations) els.syncPhoneProviderActivations.disabled = false;
+      }
+    }
+
+    async function runPhoneActivationAction(phoneId, action) {
+      const item = state.phonePool.find((entry) => entry.id === phoneId);
+      if (!item || item.provider === "custom" || !item.activation_id || item.provider_terminal) return;
+      const labels = {
+        resend: "请求新短信",
+        complete: "完成订单",
+        cancel: "取消订单",
+      };
+      const label = labels[action] || "订单操作";
+      if (["complete", "cancel"].includes(action) && !confirm(`${label} ${item.phone}？完成或取消后，该号码不会再分配给刷新任务。`)) return;
+      item.activation_action = action;
+      renderPhonePool();
+      try {
+        const response = await fetch("/client-api/phone-provider/activation-action", {
+          method: "POST",
+          headers: apiHeaders(),
+          body: JSON.stringify({
+            provider: item.provider,
+            api_key: item.api_key,
+            activation_id: item.activation_id,
+            endpoint: item.endpoint,
+            action,
+          }),
+        });
+        const data = await readJsonResponse(response, `${label}失败`);
+        item.provider_status = data.message || label;
+        item.provider_terminal = Boolean(data.terminal);
+        item.provider_synced_at = data.checked_at || new Date().toISOString();
+        item.last_message = data.provider_response || item.last_message || "";
+        if (item.provider_terminal) item.status = "idle";
+        savePhonePool();
+        renderAll();
+        toast(`${item.phone} ${data.message || label}`);
+      } catch (error) {
+        const details = error.details || { error: error.message || `${label}失败`, error_code: "phone_provider_action_failed" };
+        item.status = "error";
+        item.last_message = details.error || `${label}失败`;
+        savePhonePool();
+        renderPhonePool();
+        addLog(`${item.phone} ${label}失败`, "error", { error_code: details.error_code || "phone_provider_action_failed", email: item.account_email });
+        toast(details.error || `${label}失败`);
+      } finally {
+        delete item.activation_action;
+        renderPhonePool();
       }
     }
 
@@ -430,6 +584,7 @@
         phone,
         ...providerFields,
         account_email: accountEmail || existing?.account_email || "",
+        provider_terminal: false,
         status: existing?.status || "idle",
         last_code: existing?.last_code || "",
         last_message: existing?.last_message || "",
@@ -495,6 +650,7 @@
           phone,
           ...providerFields,
           account_email: accountEmailKey(email),
+          provider_terminal: false,
           status: existing?.status || "idle",
           last_code: existing?.last_code || "",
           last_message: existing?.last_message || "",
@@ -685,10 +841,15 @@
       formatPhoneTime,
       renderPhoneBindingList,
       renderPhonePool,
+      setPhonePoolFilter(filter) {
+        state.phonePoolFilter = ["all", "bound", "available", "closed"].includes(filter) ? filter : "all";
+        renderPhonePool();
+      },
       validPhoneApiUrl,
       syncPhoneProviderForm,
       verifyPhoneProvider,
       syncPhoneProviderActivations,
+      runPhoneActivationAction,
       addOrUpdatePhoneEntry,
       importPhoneBatchEntries,
       bindPhoneToSelected,

@@ -152,6 +152,7 @@ class HttpHandlersTests(unittest.TestCase):
             poll_phone_code=lambda payload: {"code": "123456", "payload": payload},
             phone_provider_balance=lambda payload: {"balance": "12.50", "payload": payload},
             phone_provider_active_activations=lambda payload: {"items": [], "payload": payload},
+            phone_provider_activation_action=lambda payload: {"action": "resend", "payload": payload},
             extract_admin_jwts=lambda payload: {"jwts": payload},
             push_public_pool=lambda payload: {"pushed": payload},
             create_upgrade_request=lambda payload: {"upgrade": payload},
@@ -288,14 +289,18 @@ class HttpHandlersTests(unittest.TestCase):
         handlers = self.make_handlers()
         balance = DummyHandler(path="/client-api/phone-provider/balance", payload={"provider": "herosms"})
         activations = DummyHandler(path="/client-api/phone-provider/active-activations", payload={"provider": "smsbower"})
+        action = DummyHandler(path="/client-api/phone-provider/activation-action", payload={"provider": "herosms", "action": "resend"})
 
         handlers.handle_post(balance)
         handlers.handle_post(activations)
+        handlers.handle_post(action)
 
         self.assertEqual(balance.sent[0][0]["balance"], "12.50")
         self.assertEqual(balance.sent[0][0]["payload"], {"provider": "herosms"})
         self.assertEqual(activations.sent[0][0]["items"], [])
         self.assertEqual(activations.sent[0][0]["payload"], {"provider": "smsbower"})
+        self.assertEqual(action.sent[0][0]["action"], "resend")
+        self.assertEqual(action.sent[0][0]["payload"], {"provider": "herosms", "action": "resend"})
 
     def test_workspace_import_post_routes_to_workspace_service(self):
         handlers = self.make_handlers()

@@ -10,6 +10,7 @@ data/*
 !data/.keep
 
 node_modules/
+.playwright-cli/
 output/
 release/
 extensions/

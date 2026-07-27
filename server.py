@@ -1518,11 +1518,13 @@ PHONE_PROVIDER_ACTIONS = {
         "balance": "getBalance",
         "status": "getStatusV2",
         "active": "getActiveActivations",
+        "activation_action": "setStatus",
     },
     "smsbower": {
         "balance": "getBalance",
         "status": "getStatus",
         "active": "getActiveActivations",
+        "activation_action": "setStatus",
     },
 }
 
@@ -1557,6 +1559,7 @@ def phone_provider_url(
     api_key: str,
     operation: str,
     activation_id: str = "",
+    params: dict[str, Any] | None = None,
 ) -> str:
     actions = PHONE_PROVIDER_ACTIONS.get(provider)
     action = actions.get(operation) if actions else ""
@@ -1571,6 +1574,12 @@ def phone_provider_url(
     query.extend([("api_key", api_key), ("action", action)])
     if activation_id:
         query.append(("id", activation_id))
+    for key, value in (params or {}).items():
+        if value is None:
+            continue
+        text = coerce_text(value)
+        if text or value == 0:
+            query.append((coerce_text(key), text or "0"))
     return urllib.parse.urlunsplit((
         parsed.scheme,
         parsed.netloc,
@@ -1586,16 +1595,29 @@ def phone_provider_response_text(raw: str) -> str:
         payload = json.loads(text)
     except Exception:
         return text
-    if isinstance(payload, dict):
-        fragments = [coerce_text(payload.get(key)) for key in ("title", "message", "detail", "error", "error_description")]
-        return " ".join(fragment for fragment in fragments if fragment) or text
-    return text
+    if not isinstance(payload, dict):
+        return text
+    fragments: list[str] = []
+    for key in ("title", "message", "detail", "error", "error_description", "response", "result", "status"):
+        value = payload.get(key)
+        if isinstance(value, (str, int, float)):
+            fragment = coerce_text(value)
+            if fragment:
+                fragments.append(fragment)
+    data = payload.get("data")
+    if isinstance(data, (str, int, float)):
+        fragment = coerce_text(data)
+        if fragment:
+            fragments.append(fragment)
+    return " ".join(fragments) or text
 
 
 def phone_provider_failure(raw: str) -> PhoneProviderError | None:
     status = phone_provider_response_text(raw).upper()
     if not status:
         return PhoneProviderError("接码平台没有返回结果", "phone_provider_response_invalid")
+    if re.search(r"(?:ACCESS_(?:BALANCE|NUMBER|RETRY_GET|ACTIVATION|CANCEL|READY)|STATUS_(?:OK|WAIT|WAIT_CODE|WAIT_RETRY|WAIT_RESEND|PREPARE|RECEIVED))", status):
+        return None
     if re.search(r"BAD[_ ]?KEY|INVALID[_ ]?(?:API[_ ]?)?KEY|KEY[_ ]?INVALID|NO[_ ]?ACCESS|UNAUTHORIZED", status):
         return PhoneProviderError("接码平台密钥无效", "phone_provider_key_invalid")
     if re.search(r"NO[_ ]?BALANCE|INSUFFICIENT[_ ]?BALANCE", status):
@@ -1604,6 +1626,10 @@ def phone_provider_failure(raw: str) -> PhoneProviderError | None:
         return PhoneProviderError("接码订单不存在或已失效", "phone_activation_missing")
     if re.search(r"BAD[_ ]?ACTION|UNSUPPORTED[_ ]?ACTION", status):
         return PhoneProviderError("接码平台不支持此操作", "phone_provider_operation_unsupported")
+    if re.search(r"SIM[_ ]?(?:TEMPORARY[_ ]?)?OFFLINE|NUMBER[_ ]?(?:NOT[_ ]?)?AVAILABLE", status):
+        return PhoneProviderError("接码号码暂时不可用", "phone_number_unavailable")
+    if re.search(r"ACTIVATION[_ ]?NOT[_ ]?ACTIVE|(?:STATUS[_ ]?)?(?:CANCEL|REFUNDED|FINISHED)", status):
+        return PhoneProviderError("接码订单已结束", "phone_activation_closed")
     if re.search(r"(?:ACCESS|ERROR|FAILED|DENIED|FORBIDDEN)", status) and not re.search(r"WAIT|PENDING|STATUS_OK", status):
         return PhoneProviderError("接码平台返回异常", "phone_provider_response_invalid")
     return None
@@ -1616,6 +1642,7 @@ def request_standard_phone_provider(
     api_key: str,
     operation: str,
     activation_id: str = "",
+    params: dict[str, Any] | None = None,
 ) -> tuple[int, str, Any]:
     if not api_key:
         raise PhoneProviderError("缺少接码平台密钥", "phone_provider_key_missing")
@@ -1625,6 +1652,7 @@ def request_standard_phone_provider(
         api_key=api_key,
         operation=operation,
         activation_id=activation_id,
+        params=params,
     )
     try:
         http_status, text = http_text(url, timeout=30)
@@ -1726,6 +1754,8 @@ def normalize_phone_activation_items(raw_payload: Any) -> list[dict[str, str]]:
         activation_id = coerce_text(first_text(value.get("activationId"), value.get("activation_id"), value.get("id"), fallback_id))
         phone = coerce_text(first_text(value.get("phoneNumber"), value.get("phone"), value.get("number")))
         if activation_id and phone:
+            can_receive_more_raw = next((value.get(key) for key in ("canGetAnotherSms", "can_receive_more", "canReceiveMore") if key in value), None)
+            can_receive_more = "true" if can_receive_more_raw is True else ("false" if can_receive_more_raw is False else coerce_text(can_receive_more_raw))
             key = f"{activation_id}:{normalize_phone_digits(phone)}"
             if key not in seen:
                 seen.add(key)
@@ -1735,6 +1765,13 @@ def normalize_phone_activation_items(raw_payload: Any) -> list[dict[str, str]]:
                     "status": coerce_text(first_text(value.get("activationStatus"), value.get("status"))),
                     "service": coerce_text(first_text(value.get("serviceCode"), value.get("service"))),
                     "country": coerce_text(first_text(value.get("countryName"), value.get("country"), value.get("countryCode"))),
+                    "operator": coerce_text(first_text(value.get("activationOperator"), value.get("operatorName"), value.get("operator"))),
+                    "cost": coerce_text(first_text(value.get("activationCost"), value.get("cost"), value.get("price"))),
+                    "currency": coerce_text(first_text(value.get("currency"), value.get("currencyCode"))),
+                    "expires_at": coerce_text(first_text(value.get("expiresAt"), value.get("expires_at"), value.get("expirationDate"))),
+                    "can_receive_more": can_receive_more,
+                    "code": coerce_text(first_text(value.get("smsCode"), value.get("sms_code"), value.get("code"), value.get("otp"))),
+                    "message": coerce_text(first_text(value.get("smsText"), value.get("sms_text"), value.get("fullSms"), value.get("message"), value.get("text"))),
                     "created_at": coerce_text(first_text(value.get("createdAt"), value.get("created_at"))),
                 })
             return
@@ -1751,16 +1788,87 @@ def phone_provider_active_activations(payload: dict[str, Any]) -> dict[str, Any]
         raise PhoneProviderError("自定义 API 不支持订单同步", "phone_provider_operation_unsupported")
     api_key = coerce_text(payload.get("api_key") or payload.get("apiKey") or payload.get("phone_api_key"))
     endpoint = coerce_text(payload.get("endpoint") or payload.get("provider_endpoint") or payload.get("phone_provider_endpoint"))
-    http_status, _, raw_payload = request_standard_phone_provider(
+    try:
+        limit = int(payload.get("limit") or 100)
+    except (TypeError, ValueError):
+        limit = 100
+    limit = min(100, max(1, limit))
+    try:
+        max_pages = int(payload.get("max_pages") or payload.get("maxPages") or 5)
+    except (TypeError, ValueError):
+        max_pages = 5
+    max_pages = min(10, max(1, max_pages))
+
+    http_status = 200
+    items: list[dict[str, str]] = []
+    seen: set[str] = set()
+    start = 0
+    page_count = 0
+    for _ in range(max_pages):
+        http_status, _, raw_payload = request_standard_phone_provider(
+            provider,
+            endpoint=endpoint,
+            api_key=api_key,
+            operation="active",
+            params={"start": start, "limit": limit},
+        )
+        page_items = normalize_phone_activation_items(raw_payload)
+        page_count += 1
+        added = 0
+        for item in page_items:
+            key = f"{item.get('activation_id', '')}:{normalize_phone_digits(item.get('phone', ''))}"
+            if key in seen:
+                continue
+            seen.add(key)
+            items.append(item)
+            added += 1
+        if len(page_items) < limit or not added:
+            break
+        start += len(page_items)
+    return {
+        "success": True,
+        "provider": provider,
+        "items": items,
+        "pages": page_count,
+        "http_status": http_status,
+        "checked_at": iso_now(),
+    }
+
+
+def phone_provider_activation_action(payload: dict[str, Any]) -> dict[str, Any]:
+    provider = normalize_phone_provider(payload.get("provider") or payload.get("phone_provider"))
+    if provider == "custom":
+        raise PhoneProviderError("自定义 API 不支持订单状态操作", "phone_provider_operation_unsupported")
+    action = coerce_text(payload.get("action")).strip().lower()
+    status_by_action = {
+        "resend": ("3", "已请求下一条短信", False),
+        "complete": ("6", "订单已完成", True),
+        "cancel": ("8", "订单已取消", True),
+    }
+    if action not in status_by_action:
+        raise PhoneProviderError("不支持的订单操作", "phone_provider_operation_unsupported")
+    activation_id = coerce_text(payload.get("activation_id") or payload.get("activationId"))
+    if not activation_id:
+        raise PhoneProviderError("缺少接码订单 ID", "phone_activation_missing")
+    api_key = coerce_text(payload.get("api_key") or payload.get("apiKey") or payload.get("phone_api_key"))
+    endpoint = coerce_text(payload.get("endpoint") or payload.get("provider_endpoint") or payload.get("phone_provider_endpoint"))
+    status, message, terminal = status_by_action[action]
+    http_status, text, _ = request_standard_phone_provider(
         provider,
         endpoint=endpoint,
         api_key=api_key,
-        operation="active",
+        operation="activation_action",
+        activation_id=activation_id,
+        params={"status": status},
     )
     return {
         "success": True,
         "provider": provider,
-        "items": normalize_phone_activation_items(raw_payload),
+        "activation_id": activation_id,
+        "action": action,
+        "message": message,
+        "provider_response": phone_provider_response_text(text)[:500],
+        "terminal": terminal,
         "http_status": http_status,
         "checked_at": iso_now(),
     }
@@ -2373,12 +2481,27 @@ def get_imap_token(account: MailAccount) -> tuple[str, str]:
     raise RuntimeError(f"IMAP token failed: {last_error}")
 
 
+def microsoft_api_message_body(item: dict[str, Any]) -> tuple[str, str]:
+    body_value = item.get("body") or item.get("Body") or {}
+    if isinstance(body_value, dict):
+        content = first_text(body_value.get("content"), body_value.get("Content"))
+        content_type = first_text(body_value.get("contentType"), body_value.get("ContentType")).lower()
+    else:
+        content = coerce_text(body_value)
+        content_type = ""
+    preview = first_text(item.get("bodyPreview"), item.get("BodyPreview"))
+    is_html = content_type == "html" or bool(re.search(r"<\s*[a-z][^>]*>", content, re.I))
+    html_body = content if is_html else ""
+    plain_body = (preview or strip_html(content)) if is_html else (content or preview)
+    return plain_body, html_body
+
+
 def fetch_graph_messages(account: MailAccount, *, limit: int, sender_filter: str = "") -> list[dict[str, Any]]:
     token = get_graph_token(account)
     messages: list[dict[str, Any]] = []
     for folder in GRAPH_FOLDERS:
         params = urllib.parse.urlencode({
-            "$select": "id,subject,bodyPreview,from,receivedDateTime,webLink",
+            "$select": "id,subject,body,bodyPreview,from,receivedDateTime,webLink",
             "$orderby": "receivedDateTime desc",
             "$top": str(max(limit, 1)),
         })
@@ -2386,6 +2509,7 @@ def fetch_graph_messages(account: MailAccount, *, limit: int, sender_filter: str
         req = urllib.request.Request(url, headers={
             "Authorization": f"Bearer {token}",
             "Accept": "application/json",
+            "Prefer": 'outlook.body-content-type="html"',
         })
         try:
             with urlopen_with_dns_retry(req, timeout=30) as resp:
@@ -2400,8 +2524,8 @@ def fetch_graph_messages(account: MailAccount, *, limit: int, sender_filter: str
         for item in payload.get("value", []):
             sender = item.get("from", {}).get("emailAddress", {}).get("address", "")
             subject = item.get("subject", "")
-            body = item.get("bodyPreview", "")
-            if sender_filter and sender_filter.lower() not in f"{sender} {subject} {body}".lower():
+            body, html_body = microsoft_api_message_body(item)
+            if sender_filter and sender_filter.lower() not in f"{sender} {subject} {body} {strip_html(html_body)}".lower():
                 continue
             messages.append(normalize_message(
                 account=account.email,
@@ -2411,6 +2535,7 @@ def fetch_graph_messages(account: MailAccount, *, limit: int, sender_filter: str
                 sender=sender,
                 subject=subject,
                 body=body,
+                html_body=html_body,
                 received_at=item.get("receivedDateTime", ""),
                 web_link=item.get("webLink", ""),
             ))
@@ -2434,7 +2559,7 @@ def fetch_outlook_api_messages(account: MailAccount, *, limit: int, sender_filte
     messages: list[dict[str, Any]] = []
     for folder in GRAPH_FOLDERS:
         params = urllib.parse.urlencode({
-            "$select": "Id,Subject,BodyPreview,From,ReceivedDateTime,WebLink",
+            "$select": "Id,Subject,Body,BodyPreview,From,ReceivedDateTime,WebLink",
             "$orderby": "ReceivedDateTime desc",
             "$top": str(max(limit, 1)),
         })
@@ -2442,6 +2567,7 @@ def fetch_outlook_api_messages(account: MailAccount, *, limit: int, sender_filte
         req = urllib.request.Request(url, headers={
             "Authorization": f"Bearer {token}",
             "Accept": "application/json",
+            "Prefer": 'outlook.body-content-type="html"',
         })
         try:
             with urlopen_with_dns_retry(req, timeout=30) as resp:
@@ -2458,8 +2584,8 @@ def fetch_outlook_api_messages(account: MailAccount, *, limit: int, sender_filte
             sender_addr = sender_info.get("EmailAddress") or sender_info.get("emailAddress") or {}
             sender = sender_addr.get("Address") or sender_addr.get("address") or ""
             subject = item.get("Subject") or item.get("subject") or ""
-            body = item.get("BodyPreview") or item.get("bodyPreview") or ""
-            if sender_filter and sender_filter.lower() not in f"{sender} {subject} {body}".lower():
+            body, html_body = microsoft_api_message_body(item)
+            if sender_filter and sender_filter.lower() not in f"{sender} {subject} {body} {strip_html(html_body)}".lower():
                 continue
             messages.append(normalize_message(
                 account=account.email,
@@ -2469,6 +2595,7 @@ def fetch_outlook_api_messages(account: MailAccount, *, limit: int, sender_filte
                 sender=sender,
                 subject=subject,
                 body=body,
+                html_body=html_body,
                 received_at=item.get("ReceivedDateTime") or item.get("receivedDateTime") or "",
                 web_link=item.get("WebLink") or item.get("webLink") or "",
             ))
@@ -3008,7 +3135,7 @@ def normalize_message(**kwargs: Any) -> dict[str, Any]:
     if not body_text and html_body:
         body_text = html_text
     text = strip_html(f"{subject}\n{body_text}\n{html_text}")
-    links = extract_links(text)
+    links = extract_links(f"{body_text}\n{html_body}")
     codes = extract_codes(text)
     mail_type = normalize_mail_type("", f"{kwargs.get('sender', '')} {subject} {text}")
     return {
@@ -6129,6 +6256,7 @@ def http_handlers() -> HttpHandlers:
             poll_phone_code=poll_phone_code,
             phone_provider_balance=phone_provider_balance,
             phone_provider_active_activations=phone_provider_active_activations,
+            phone_provider_activation_action=phone_provider_activation_action,
             extract_admin_jwts=extract_admin_jwts,
             push_public_pool=push_public_pool,
             create_upgrade_request=create_upgrade_request,

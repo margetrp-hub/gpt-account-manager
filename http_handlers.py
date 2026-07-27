@@ -68,6 +68,7 @@ class HttpHandlers:
     poll_phone_code: PayloadHandler
     phone_provider_balance: PayloadHandler
     phone_provider_active_activations: PayloadHandler
+    phone_provider_activation_action: PayloadHandler
     extract_admin_jwts: PayloadHandler
     push_public_pool: PayloadHandler
     create_upgrade_request: PayloadHandler
@@ -473,6 +474,12 @@ class HttpHandlers:
                 handler.send_json(self.phone_provider_active_activations(handler.read_json()))
             except Exception as exc:
                 return self._bad_request(handler, exc, code=getattr(exc, "error_code", "phone_provider_sync_failed"))
+            return True
+        if handler.path == "/client-api/phone-provider/activation-action":
+            try:
+                handler.send_json(self.phone_provider_activation_action(handler.read_json()))
+            except Exception as exc:
+                return self._bad_request(handler, exc, code=getattr(exc, "error_code", "phone_provider_action_failed"))
             return True
         return False
 

@@ -134,6 +134,7 @@ const state = {
   jobs: new Map(),
   poller: undefined,
   phonePool: normalizePhonePool(loadJson(STORAGE_KEYS.phonePool, [])),
+  phonePoolFilter: "all",
   sourcePage: 1,
   savedRefreshResults: new Map(),
   runProxyIps: new Set(),
@@ -263,6 +264,7 @@ const els = {
   phoneProviderStatus: document.querySelector("#phoneProviderStatus"),
   phoneModeBatch: document.querySelector("#phoneModeBatch"),
   phoneModeOneToOne: document.querySelector("#phoneModeOneToOne"),
+  phoneModeHint: document.querySelector("#phoneModeHint"),
   phoneBatchPanel: document.querySelector("#phoneBatchPanel"),
   phoneBatchText: document.querySelector("#phoneBatchText"),
   importPhoneBatch: document.querySelector("#importPhoneBatch"),
@@ -274,6 +276,8 @@ const els = {
   phoneCodePanel: document.querySelector(".phone-code-panel"),
   addPhoneEntry: document.querySelector("#addPhoneEntry"),
   phonePoolList: document.querySelector("#phonePoolList"),
+  phonePoolFilters: document.querySelector("#phonePoolFilters"),
+  phonePoolSummary: document.querySelector("#phonePoolSummary"),
   phoneBindingList: document.querySelector("#phoneBindingList"),
   manualCodeModal: document.querySelector("#manualCodeModal"),
   manualCodeModalEyebrow: document.querySelector("#manualCodeModalEyebrow"),
@@ -302,6 +306,10 @@ if (els.pickupTempApi) els.pickupTempApi.value = settings.temp_sync_api || "";
 if (els.pickupTempSitePassword) els.pickupTempSitePassword.value = settings.temp_sync_site_password || "";
 if (els.phoneModeBatch) els.phoneModeBatch.checked = settings.phone_pool_mode === "batch";
 if (els.phoneModeOneToOne) els.phoneModeOneToOne.checked = settings.phone_pool_mode !== "batch";
+if (els.phoneProvider) els.phoneProvider.value = settings.phone_provider || "custom";
+if (els.phoneApiUrl) els.phoneApiUrl.value = settings.phone_api_url || "";
+if (els.phoneApiKey) els.phoneApiKey.value = settings.phone_api_key || "";
+if (els.phoneProviderEndpoint) els.phoneProviderEndpoint.value = settings.phone_provider_endpoint || "";
 if (els.loginStrategy) els.loginStrategy.value = "protocol";
 if (els.taskMode) els.taskMode.value = "login";
 
@@ -512,9 +520,12 @@ const ERROR_MANUAL = {
   phone_provider_key_invalid: "平台密钥无效",
   phone_provider_no_balance: "平台余额不足",
   phone_provider_endpoint_invalid: "平台地址格式错误",
+  phone_provider_operation_unsupported: "平台不支持此操作",
   phone_provider_request_failed: "接码平台请求失败",
   phone_provider_response_invalid: "接码平台响应异常",
   phone_activation_missing: "接码订单不存在或已失效",
+  phone_activation_closed: "接码订单已结束",
+  phone_number_unavailable: "接码号码暂时不可用",
   phone_code_pending: "等待手机验证码",
   phone_code_missing: "未收到手机验证码",
   phone_code_fetch_failed: "手机取码失败",
@@ -1375,6 +1386,10 @@ function saveSettings() {
     temp_sync_admin_key: els.tempSyncAdminKey ? els.tempSyncAdminKey.value.trim() : "",
     temp_sync_site_password: els.tempSyncSitePassword ? els.tempSyncSitePassword.value.trim() : "",
     phone_pool_mode: currentPhoneMode(),
+    phone_provider: els.phoneProvider ? els.phoneProvider.value : "custom",
+    phone_api_url: els.phoneApiUrl ? els.phoneApiUrl.value.trim() : "",
+    phone_api_key: els.phoneApiKey ? els.phoneApiKey.value.trim() : "",
+    phone_provider_endpoint: els.phoneProviderEndpoint ? els.phoneProviderEndpoint.value.trim() : "",
   });
 }
 
@@ -1644,6 +1659,15 @@ function accountMailVerified(account) {
 
 function accountMailFailed(account) {
   return refreshSourceListHelper?.accountMailFailed?.(account) || false;
+}
+
+function tempSitePasswordForAccount(account) {
+  return String(
+    account?.site_password
+    || els.pickupTempSitePassword?.value
+    || els.tempSyncSitePassword?.value
+    || "",
+  ).trim();
 }
 
 function accountFetchPayload(account) {
@@ -2064,6 +2088,7 @@ refreshSourceListHelper = refreshSourceList?.createRefreshSourceListHelper?.({
     toast,
     renderRefreshStateViews,
     rowState,
+    tempSitePasswordForAccount,
   },
   actions: {
     storageKeys: STORAGE_KEYS,
@@ -2349,7 +2374,7 @@ function loginPayload(row) {
         email: item.email,
         jwt: item.jwt,
         base_url: item.base_url,
-        site_password: item.site_password,
+        site_password: tempSitePasswordForAccount(item),
       })),
     generic_accounts: sameEmail
       .filter((item) => item.source === "generic")
@@ -3436,22 +3461,12 @@ async function syncAccountsFromServer({ quiet = false } = {}) {
     if (!accountsResponse.ok) throw new Error(accountsData.error || accountsResponse.statusText || "Failed to load Outlook accounts");
     if (!tempResponse.ok) throw new Error(tempData.error || tempResponse.statusText || "Failed to load temp accounts");
     if (!genericResponse.ok) throw new Error(genericData.error || genericResponse.statusText || "Failed to load generic accounts");
-    const serverManagedBeforeIds = new Set(
-      state.accounts
-        .filter((account) => ["microsoft", "temp", "generic"].includes(account.source))
-        .map((account) => account.id)
-    );
     const syncedAccounts = [
       ...((accountsData.accounts || []).map((item) => normalizeServerAccount(item, "microsoft")).filter(Boolean)),
       ...((tempData.addresses || []).map((item) => normalizeServerAccount(item, "temp")).filter(Boolean)),
       ...((genericData.accounts || []).map((item) => normalizeServerAccount(item, "generic")).filter(Boolean)),
     ];
     mergeServerAccountsSnapshot(syncedAccounts);
-    if (syncedAccounts.length || serverManagedBeforeIds.size) {
-      const serverIds = new Set(syncedAccounts.map((account) => account.id));
-      state.accounts = state.accounts.filter((account) => !serverManagedBeforeIds.has(account.id) || serverIds.has(account.id));
-      invalidateSourceAccountsCache();
-    }
     saveJson(STORAGE_KEYS.accounts, state.accounts);
     renderSources();
   } catch (error) {
@@ -3629,8 +3644,14 @@ if (els.pollSelectedPhone) {
   els.pollSelectedPhone.addEventListener("click", pollSelectedPhoneCode);
 }
 if (els.phoneProvider) {
-  els.phoneProvider.addEventListener("change", () => refreshPhonePoolHelper?.syncPhoneProviderForm?.());
+  els.phoneProvider.addEventListener("change", () => {
+    refreshPhonePoolHelper?.syncPhoneProviderForm?.();
+    saveSettings();
+  });
 }
+[els.phoneApiUrl, els.phoneApiKey, els.phoneProviderEndpoint].forEach((input) => {
+  input?.addEventListener("change", saveSettings);
+});
 if (els.verifyPhoneProvider) {
   els.verifyPhoneProvider.addEventListener("click", () => refreshPhonePoolHelper?.verifyPhoneProvider?.());
 }
@@ -3661,6 +3682,7 @@ els.manualCodeModalInput?.addEventListener("keydown", (event) => {
   if (!input) return;
   input.addEventListener("change", () => {
     saveSettings();
+    refreshPhonePoolHelper?.syncPhoneProviderForm?.();
     renderPhonePool();
     renderSelectedPhoneCodePanel();
   });
@@ -3673,9 +3695,22 @@ if (els.phonePoolList) {
       bindPhoneToSelected(row.dataset.id);
     } else if (event.target.closest(".poll-phone")) {
       pollPhoneEntry(row.dataset.id);
+    } else if (event.target.closest(".request-phone-sms")) {
+      refreshPhonePoolHelper?.runPhoneActivationAction?.(row.dataset.id, "resend");
+    } else if (event.target.closest(".complete-phone-activation")) {
+      refreshPhonePoolHelper?.runPhoneActivationAction?.(row.dataset.id, "complete");
+    } else if (event.target.closest(".cancel-phone-activation")) {
+      refreshPhonePoolHelper?.runPhoneActivationAction?.(row.dataset.id, "cancel");
     } else if (event.target.closest(".remove-phone")) {
       removePhoneEntry(row.dataset.id);
     }
+  });
+}
+if (els.phonePoolFilters) {
+  els.phonePoolFilters.addEventListener("click", (event) => {
+    const button = event.target.closest("[data-phone-filter]");
+    if (!button) return;
+    refreshPhonePoolHelper?.setPhonePoolFilter?.(button.dataset.phoneFilter || "all");
   });
 }
 els.clearQueue.addEventListener("click", async () => {
