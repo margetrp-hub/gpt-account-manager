@@ -11,6 +11,7 @@ vm.runInNewContext(
 
 const view = sandbox.window.GAM.mailboxMessageView.createMailboxMessageView({
   typeLabels: { verification: "Verification", other: "Other" },
+  serviceLabels: { openai: "OpenAI", other: "Other Service" },
   emptyCategoryLabel: "Ungrouped",
   normalizeMailType: (value) => value || "other",
   normalizePlainMailBody: (value) => String(value || ""),
@@ -40,6 +41,7 @@ assert.equal(
   view.mailKey({ source: "MICROSOFT", account: "User@Outlook.com", folder: "Inbox", mid: "1" }),
   view.mailKey({ source: "microsoft", account: "user@outlook.com", folder: "inbox", mid: "1" }),
 );
+assert.equal(view.normalizeMailService("", { sender: "noreply@openai.com" }), "openai");
 
 const verificationMail = view.renderDetailHtml({
   subject: "Verification",

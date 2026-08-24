@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime, timezone
+from email.utils import parsedate_to_datetime
 from pathlib import Path
 from typing import Any, Callable
 from urllib.parse import parse_qs
@@ -26,8 +28,9 @@ class MessageQueryService:
         limit: int = 80,
         offset: int = 0,
     ) -> dict[str, Any]:
-        messages = self.filter_messages(self.load_workspace_messages(workspace_id), payload)
-        return self._paged_response(messages, limit=limit, offset=offset)
+        all_messages = self.load_workspace_messages(workspace_id)
+        messages = self.filter_messages(all_messages, payload)
+        return self._paged_response(messages, limit=limit, offset=offset, activity_messages=all_messages)
 
     def workspace_messages_response_from_params(
         self,
@@ -81,8 +84,9 @@ class MessageQueryService:
     ) -> dict[str, Any]:
         if self.load_messages_from_path is None:
             raise RuntimeError("load_messages_from_path is not configured")
-        messages = self.filter_messages(self.load_messages_from_path(path), payload)
-        return self._paged_response(messages, limit=limit, offset=offset)
+        all_messages = self.load_messages_from_path(path)
+        messages = self.filter_messages(all_messages, payload)
+        return self._paged_response(messages, limit=limit, offset=offset, activity_messages=all_messages)
 
     @staticmethod
     def parse_query_params(params: dict[str, list[str]]) -> tuple[dict[str, Any], str, str]:
@@ -92,6 +96,7 @@ class MessageQueryService:
             "sender": params.get("sender", [""])[0],
             "source": params.get("source", ["all"])[0],
             "mail_type": params.get("mail_type", ["all"])[0],
+            "service": params.get("service", ["all"])[0],
             "category": params.get("category", ["all"])[0],
             "account": params.get("account", [""])[0],
             "accounts": accounts,
@@ -104,6 +109,7 @@ class MessageQueryService:
         *,
         limit: int = 80,
         offset: int = 0,
+        activity_messages: list[dict[str, Any]] | None = None,
     ) -> dict[str, Any]:
         limit = self._coerce_limit(limit)
         offset = self._coerce_offset(offset)
@@ -114,7 +120,41 @@ class MessageQueryService:
             "offset": offset,
             "limit": limit,
             "types": self.mail_type_labels,
+            "account_activity": self._account_activity(activity_messages if activity_messages is not None else messages),
         }
+
+    @staticmethod
+    def _account_activity(messages: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
+        activity: dict[str, dict[str, Any]] = {}
+        latest_keys: dict[str, tuple[int, float | str]] = {}
+        for message in messages:
+            account = str(message.get("account") or "").strip().lower()
+            if not account:
+                continue
+            row = activity.setdefault(account, {"count": 0, "last_received_at": ""})
+            row["count"] += 1
+            received_at = str(message.get("received_at") or message.get("cached_at") or "").strip()
+            received_key = MessageQueryService._received_at_key(received_at)
+            if received_at and (account not in latest_keys or received_key > latest_keys[account]):
+                latest_keys[account] = received_key
+                row["last_received_at"] = received_at
+        return activity
+
+    @staticmethod
+    def _received_at_key(value: str) -> tuple[int, float | str]:
+        text = str(value or "").strip()
+        if not text:
+            return (0, "")
+        try:
+            parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+        except ValueError:
+            try:
+                parsed = parsedate_to_datetime(text)
+            except (TypeError, ValueError, OverflowError):
+                return (0, text)
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=timezone.utc)
+        return (1, parsed.timestamp())
 
     @staticmethod
     def _coerce_limit(value: Any) -> int:

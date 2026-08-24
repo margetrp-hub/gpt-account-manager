@@ -53,9 +53,7 @@ class HttpHandlers:
     load_workspace_generic_accounts: WorkspaceLoader
     load_refresh_results_for_workspace: WorkspaceLoader
     load_login_history_for_workspace: WorkspaceLoader
-    hydrate_login_mail_credentials: Callable[[dict[str, Any], str], None]
-    fetch_transient_client_mail: PayloadHandler
-    persist_workspace_mail_fetch_result: WorkspacePayloadHandler
+    fetch_client_mail: WorkspacePayloadHandler
     start_client_mail_fetch_job: WorkspacePayloadHandler
     delete_workspace_mail_messages: WorkspacePayloadHandler
     check_proxy_egress: PayloadHandler
@@ -372,9 +370,7 @@ class HttpHandlers:
             try:
                 payload = handler.read_json()
                 workspace = handler.workspace_id()
-                self.hydrate_login_mail_credentials(payload, workspace)
-                result = self.fetch_transient_client_mail(payload)
-                handler.send_json(self.persist_workspace_mail_fetch_result(workspace, result))
+                handler.send_json(self.fetch_client_mail(payload, workspace))
             except Exception as exc:
                 handler.send_json({"error": str(exc)[:500]}, status=HTTPStatus.BAD_REQUEST)
             return True

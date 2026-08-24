@@ -274,6 +274,7 @@
         els.phonePoolList.innerHTML = `<div class="phone-pool-empty">${allItems.length ? "当前筛选下没有号码。" : "还没有长效手机。"}</div>`;
         renderPhoneBindingList();
         renderSelectedPhoneCodePanel();
+        renderPhoneFlowSteps();
         return;
       }
       els.phonePoolList.innerHTML = items.map((item) => {
@@ -309,6 +310,7 @@
       }).join("");
       renderPhoneBindingList();
       renderSelectedPhoneCodePanel();
+      renderPhoneFlowSteps();
     }
 
     function validPhoneApiUrl(value) {
@@ -371,6 +373,28 @@
       else delete els.phoneProviderStatus.dataset.tone;
     }
 
+    function renderPhoneFlowSteps() {
+      const selected = selectedSingleQueueRow();
+      const selectedEntry = selected ? phoneEntryForRow(selected) : null;
+      const provider = currentPhoneProvider();
+      const providerReady = provider === "custom"
+        ? validPhoneApiUrl(els.phoneApiUrl?.value)
+        : Boolean(els.phoneApiKey?.value.trim());
+      const states = {
+        provider: providerReady,
+        numbers: state.phonePool.some((item) => !isTerminalPhoneOrder(item)),
+        binding: Boolean(selectedEntry),
+        code: Boolean(phoneCodeForRow(selected, selectedEntry) || selectedEntry?.last_code),
+      };
+      let currentMarked = false;
+      document.querySelectorAll("[data-phone-step]").forEach((step) => {
+        const done = Boolean(states[step.dataset.phoneStep]);
+        step.classList.toggle("is-done", done);
+        step.classList.toggle("is-current", !done && !currentMarked);
+        if (!done && !currentMarked) currentMarked = true;
+      });
+    }
+
     function syncPhoneProviderForm() {
       const provider = currentPhoneProvider();
       document.querySelectorAll("[data-phone-provider]").forEach((field) => {
@@ -385,6 +409,15 @@
         els.phoneBatchPanel.hidden = !batchMode;
         if (!batchMode) els.phoneBatchPanel.open = false;
       }
+      if (els.phoneManualEntry) {
+        const changedProvider = els.phoneManualEntry.dataset.provider !== provider;
+        if (changedProvider) {
+          els.phoneManualEntry.dataset.provider = provider;
+          els.phoneManualEntry.open = provider === "custom";
+        }
+        const summary = els.phoneManualEntry.querySelector("summary");
+        if (summary) summary.textContent = provider === "custom" ? "添加自定义 API 号码" : "手动添加已有订单";
+      }
       if (els.phoneModeHint) {
         els.phoneModeHint.textContent = batchMode
           ? "号码先进入空闲池，刷新任务按队列顺序分配。"
@@ -398,6 +431,7 @@
       } else {
         setPhoneProviderStatus("内置 SMS-Activate 兼容接口", "neutral");
       }
+      renderPhoneFlowSteps();
     }
 
     async function verifyPhoneProvider() {

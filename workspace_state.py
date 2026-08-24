@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable
 
+from storage.file_lock import atomic_write_json
 from workspace_views import WorkspaceViews, json_row_fallback_key
 
 
@@ -42,6 +43,13 @@ class WorkspaceState:
         if state is None:
             state = threading.RLock()
             object.__setattr__(self, "_activity_write_lock", state)
+        return state
+
+    def _message_lock(self) -> threading.RLock:
+        state = self.__dict__.get("_message_write_lock")
+        if state is None:
+            state = threading.RLock()
+            object.__setattr__(self, "_message_write_lock", state)
         return state
 
     def _safe_activity_rows(
@@ -95,6 +103,27 @@ class WorkspaceState:
     def messages_path(self, workspace_id: str) -> Path:
         return self.views.workspace_file(workspace_id, "messages.json")
 
+    def ignored_messages_path(self, workspace_id: str) -> Path:
+        return self.views.workspace_file(workspace_id, "ignored_messages.json")
+
+    def load_ignored_message_keys(self, workspace_id: str) -> list[str]:
+        path = self.ignored_messages_path(workspace_id)
+        if not path.exists():
+            return []
+        try:
+            raw = json.loads(path.read_text(encoding="utf-8-sig"))
+        except (json.JSONDecodeError, OSError):
+            return []
+        rows = raw.get("keys", []) if isinstance(raw, dict) else raw
+        return [str(item) for item in rows if str(item or "").strip()] if isinstance(rows, list) else []
+
+    def save_ignored_message_keys(self, workspace_id: str, keys: list[str]) -> None:
+        unique = list(dict.fromkeys(str(item) for item in keys if str(item or "").strip()))[-5000:]
+        atomic_write_json(self.ignored_messages_path(workspace_id), {
+            "updated_at": self.iso_now(),
+            "keys": unique,
+        })
+
     def refresh_results_path(self, workspace_id: str) -> Path:
         return self.views.workspace_file(workspace_id, "refresh_results.json")
 
@@ -135,20 +164,29 @@ class WorkspaceState:
         return self.views.messages(workspace_id)
 
     def save_messages_state(self, workspace_id: str, messages: list[dict[str, Any]]) -> None:
-        for path in self.message_write_paths(workspace_id):
-            self.save_messages_rows(messages, path)
+        with self._message_lock():
+            for path in self.message_write_paths(workspace_id):
+                self.save_messages_rows(messages, path)
 
     def upsert_messages_state(self, workspace_id: str, incoming: list[dict[str, Any]]) -> int:
         if not incoming:
             return 0
-        cache = {self.message_key(message): message for message in self.load_messages(workspace_id)}
-        now = self.iso_now()
-        for message in incoming:
-            message.setdefault("cached_at", now)
-            cache[self.message_key(message)] = message
-        merged = list(cache.values())
-        self.save_messages_state(workspace_id, merged)
-        return len(merged)
+        with self._message_lock():
+            ignored = set(self.load_ignored_message_keys(workspace_id))
+            cache = {
+                self.message_key(message): message
+                for message in self.load_messages(workspace_id)
+                if self.message_key(message) not in ignored
+            }
+            now = self.iso_now()
+            for message in incoming:
+                message.setdefault("cached_at", now)
+                key = self.message_key(message)
+                if key not in ignored:
+                    cache[key] = message
+            merged = list(cache.values())
+            self.save_messages_state(workspace_id, merged)
+            return len(merged)
 
     def delete_messages_state(
         self,
@@ -157,37 +195,42 @@ class WorkspaceState:
         *,
         filter_messages: MessageFilter,
     ) -> dict[str, Any]:
-        messages = self.load_messages(workspace_id)
-        raw_messages = payload.get("messages")
-        if isinstance(raw_messages, list) and raw_messages:
-            targets = [item for item in raw_messages if isinstance(item, dict)]
-        else:
-            filter_payload = payload.get("filter")
-            if isinstance(filter_payload, dict):
-                targets = filter_messages(messages, filter_payload)
+        with self._message_lock():
+            messages = self.load_messages(workspace_id)
+            raw_messages = payload.get("messages")
+            if isinstance(raw_messages, list) and raw_messages:
+                targets = [item for item in raw_messages if isinstance(item, dict)]
             else:
-                message = payload.get("message")
-                if not isinstance(message, dict):
-                    raise RuntimeError("缺少要删除的邮件")
-                targets = [message]
-        target_keys = {self.message_key(item) for item in targets if isinstance(item, dict)}
-        if not target_keys:
+                filter_payload = payload.get("filter")
+                if isinstance(filter_payload, dict):
+                    targets = filter_messages(messages, filter_payload)
+                else:
+                    message = payload.get("message")
+                    if not isinstance(message, dict):
+                        raise RuntimeError("缺少要删除的邮件")
+                    targets = [message]
+            target_keys = {self.message_key(item) for item in targets if isinstance(item, dict)}
+            if not target_keys:
+                return {
+                    "success": True,
+                    "deleted": 0,
+                    "cache_removed": 0,
+                    "deleted_keys": [],
+                    "message": "没有匹配到需要清理的缓存邮件",
+                }
+            kept = [item for item in messages if self.message_key(item) not in target_keys]
+            deleted = len(messages) - len(kept)
+            ignored = self.load_ignored_message_keys(workspace_id)
+            self.save_ignored_message_keys(workspace_id, [*ignored, *sorted(target_keys)])
+            if deleted:
+                self.save_messages_state(workspace_id, kept)
             return {
                 "success": True,
-                "deleted": 0,
-                "cache_removed": 0,
-                "message": "没有匹配到需要清理的缓存邮件",
+                "deleted": deleted,
+                "cache_removed": deleted,
+                "deleted_keys": sorted(target_keys),
+                "message": "已从工具缓存批量清理，后续收信不会重新写入这些邮件",
             }
-        kept = [item for item in messages if self.message_key(item) not in target_keys]
-        deleted = len(messages) - len(kept)
-        if deleted:
-            self.save_messages_state(workspace_id, kept)
-        return {
-            "success": True,
-            "deleted": deleted,
-            "cache_removed": deleted,
-            "message": "已从工具缓存批量清理，不会删除远端真实邮箱邮件",
-        }
 
     def load_refresh_results(self, workspace_id: str) -> list[dict[str, Any]]:
         return self.views.refresh_results(

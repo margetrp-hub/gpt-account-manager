@@ -1,6 +1,6 @@
 [project]
 name = "gpt-account-manager"
-version = "1.3.4"
+version = "1.3.5"
 description = "浏览器优先的 GPT 账号管理助手，支持邮箱验证码、OAuth 刷新、CPA 仓管和 Sub2API auth 导出。"
 readme = "README.md"
 requires-python = ">=3.10"

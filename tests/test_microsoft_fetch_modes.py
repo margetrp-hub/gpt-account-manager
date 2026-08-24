@@ -41,6 +41,38 @@ class MicrosoftFetchModeTests(unittest.TestCase):
         self.assertEqual(result["error_code"], "outlook_reauth_required")
         self.assertIn("已尝试 IMAP / Graph / Outlook API。", result["error_hint"])
 
+    def test_auto_mode_retries_transient_provider_failure_before_fallback(self) -> None:
+        account = self.make_account()
+        calls = {"imap": 0, "graph": 0}
+
+        def imap_fetch(*_args, **_kwargs):
+            calls["imap"] += 1
+            if calls["imap"] < 2:
+                raise RuntimeError("代理 TLS 连接被中断")
+            return [{"subject": "new mail"}]
+
+        with mock.patch.object(s, "fetch_imap_messages", side_effect=imap_fetch), \
+             mock.patch.object(s, "fetch_graph_messages", side_effect=lambda *_args, **_kwargs: calls.update(graph=calls["graph"] + 1)), \
+             mock.patch.object(s, "time") as time_mock:
+            time_mock.sleep = mock.Mock()
+            result = s.fetch_for_account(account, "auto", 5, "")
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["provider"], "imap")
+        self.assertEqual(calls["imap"], 2)
+        self.assertEqual(calls["graph"], 0)
+        time_mock.sleep.assert_called_once_with(0.75)
+
+    def test_auto_mode_does_not_retry_expired_refresh_token(self) -> None:
+        account = self.make_account()
+        with mock.patch.object(s, "fetch_imap_messages", side_effect=RuntimeError("AADSTS70000 grant is expired")) as imap_mock, \
+             mock.patch.object(s, "fetch_graph_messages", return_value=[]):
+            result = s.fetch_for_account(account, "auto", 5, "")
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["provider"], "graph")
+        imap_mock.assert_called_once()
+
     def test_graph_fetch_preserves_html_body(self) -> None:
         response = mock.MagicMock()
         response.__enter__.return_value = response

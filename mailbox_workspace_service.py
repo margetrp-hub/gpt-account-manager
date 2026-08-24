@@ -178,6 +178,74 @@ class MailboxWorkspaceService:
         counts = self.login_mail_credential_counts(payload)
         return {**counts, "added": added, "updated": updated}
 
+    def merge_fetched_targets_for_workspace(
+        self,
+        workspace_id: str,
+        *,
+        accounts: list[Any] | None = None,
+        temp_addresses: list[Any] | None = None,
+        generic_accounts: list[Any] | None = None,
+    ) -> dict[str, int]:
+        status_fields = (
+            "last_check_at",
+            "last_status",
+            "last_error",
+            "last_error_code",
+            "last_error_label",
+            "last_error_hint",
+            "last_message_count",
+        )
+
+        def merge_status(saved: dict[str, Any], fetched: list[Any]) -> int:
+            updated = 0
+            for incoming in fetched:
+                key = self.coerce_text(getattr(incoming, "email", "")).lower()
+                current = saved.get(key)
+                if current is None:
+                    continue
+                changed = False
+                for field_name in status_fields:
+                    value = getattr(incoming, field_name, None)
+                    if value is None or getattr(current, field_name, None) == value:
+                        continue
+                    setattr(current, field_name, value)
+                    changed = True
+                if changed:
+                    updated += 1
+            return updated
+
+        with self.workspace_lock(workspace_id):
+            stored_accounts = self.load_workspace_accounts(workspace_id)
+            stored_temp = self.load_workspace_temp_addresses(workspace_id)
+            stored_generic = self.load_workspace_generic_accounts(workspace_id)
+
+            account_updates = merge_status(stored_accounts, list(accounts or []))
+            for incoming in list(accounts or []):
+                key = self.coerce_text(getattr(incoming, "email", "")).lower()
+                current = stored_accounts.get(key)
+                refreshed_token = getattr(incoming, "refresh_token", "")
+                if current is None or not self.usable_secret(refreshed_token) or current.refresh_token == refreshed_token:
+                    continue
+                current.refresh_token = refreshed_token
+                current.updated_at = self.coerce_text(getattr(incoming, "updated_at", "")) or self.iso_now()
+                account_updates += 1
+
+            temp_updates = merge_status(stored_temp, list(temp_addresses or []))
+            generic_updates = merge_status(stored_generic, list(generic_accounts or []))
+
+            if account_updates:
+                self.save_workspace_accounts_state(workspace_id, stored_accounts)
+            if temp_updates:
+                self.save_workspace_temp_addresses_state(workspace_id, stored_temp)
+            if generic_updates:
+                self.save_workspace_generic_accounts_state(workspace_id, stored_generic)
+
+        return {
+            "microsoft": account_updates,
+            "temp": temp_updates,
+            "generic": generic_updates,
+        }
+
     def import_pickup_accounts_for_workspace(self, payload: dict[str, Any], workspace_id: str = "public", *, replace_existing: bool = True) -> dict[str, Any]:
         incoming, errors = self.parse_account_lines(str(payload.get("text", "")))
         with self.workspace_lock(workspace_id):

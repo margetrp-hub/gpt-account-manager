@@ -265,6 +265,7 @@ const els = {
   phoneModeBatch: document.querySelector("#phoneModeBatch"),
   phoneModeOneToOne: document.querySelector("#phoneModeOneToOne"),
   phoneModeHint: document.querySelector("#phoneModeHint"),
+  phoneManualEntry: document.querySelector("#phoneManualEntry"),
   phoneBatchPanel: document.querySelector("#phoneBatchPanel"),
   phoneBatchText: document.querySelector("#phoneBatchText"),
   importPhoneBatch: document.querySelector("#importPhoneBatch"),

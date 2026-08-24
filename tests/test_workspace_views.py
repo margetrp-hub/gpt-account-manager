@@ -295,6 +295,30 @@ class WorkspaceViewsIntegrationTests(unittest.TestCase):
         self.assertEqual({row["account"] for row in root_messages}, expected_accounts)
         self.assertEqual({row["account"] for row in workspace_messages}, expected_accounts)
 
+    def test_deleted_workspace_message_is_not_reinserted_by_later_fetch(self) -> None:
+        message = {
+            "source": "microsoft",
+            "account": "user@example.com",
+            "folder": "inbox",
+            "mid": "message-1",
+            "subject": "verification code 123456",
+            "received_at": "2026-06-08T02:00:00+00:00",
+        }
+        state = s.workspace_state()
+        state.upsert_messages_state("team-a1", [dict(message)])
+
+        result = state.delete_messages_state(
+            "team-a1",
+            {"message": message},
+            filter_messages=s.filter_messages,
+        )
+        state.upsert_messages_state("team-a1", [dict(message)])
+
+        self.assertEqual(result["deleted"], 1)
+        self.assertEqual(result["deleted_keys"], [s.message_key(message)])
+        self.assertEqual(state.load_messages("team-a1"), [])
+        self.assertIn(s.message_key(message), state.load_ignored_message_keys("team-a1"))
+
     def test_public_workspace_load_messages_backfills_sqlite_sidecars(self) -> None:
         root_message = {
             "source": "microsoft",
@@ -449,6 +473,48 @@ class WorkspaceViewsIntegrationTests(unittest.TestCase):
         self.assertNotIn("same@example.com", s.load_workspace_accounts("public"))
         self.assertNotIn("same@example.com", s.load_workspace_temp_addresses("public"))
         self.assertNotIn("same@example.com", s.load_workspace_generic_accounts("public"))
+
+    def test_mailbox_service_merges_rotated_token_without_replacing_workspace(self) -> None:
+        first = s.MailAccount(
+            email="first@example.com",
+            password="first-pass",
+            client_id="first-client",
+            refresh_token="old-rt",
+            created_at="2026-01-01T00:00:00Z",
+        )
+        untouched = s.MailAccount(
+            email="untouched@example.com",
+            password="untouched-pass",
+            client_id="untouched-client",
+            refresh_token="untouched-rt",
+        )
+        s.save_workspace_accounts_state("public", {
+            first.email.lower(): first,
+            untouched.email.lower(): untouched,
+        })
+        fetched = s.MailAccount(
+            email="first@example.com",
+            password="first-pass",
+            client_id="first-client",
+            refresh_token="rotated-rt",
+            last_status="ok",
+            last_check_at="2026-08-24T06:00:00Z",
+            last_message_count=5,
+        )
+
+        result = s.MAILBOX_WORKSPACE_SERVICE.merge_fetched_targets_for_workspace(
+            "public",
+            accounts=[fetched],
+        )
+
+        accounts = s.load_workspace_accounts("public")
+        self.assertGreaterEqual(result["microsoft"], 1)
+        self.assertEqual(len(accounts), 2)
+        self.assertEqual(accounts["first@example.com"].refresh_token, "rotated-rt")
+        self.assertEqual(accounts["first@example.com"].last_status, "ok")
+        self.assertEqual(accounts["first@example.com"].last_message_count, 5)
+        self.assertEqual(accounts["first@example.com"].created_at, "2026-01-01T00:00:00Z")
+        self.assertEqual(accounts["untouched@example.com"].refresh_token, "untouched-rt")
 
     def test_mailbox_service_delete_pickup_accounts_keeps_other_sources(self) -> None:
         s.save_workspace_accounts_state("public", {

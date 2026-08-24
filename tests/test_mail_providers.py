@@ -31,7 +31,17 @@ class MailProviderErrorClassificationTests(unittest.TestCase):
         )
 
         self.assertEqual(result["error_code"], "outlook_refresh_expired")
-        self.assertEqual(result["error_label"], "Outlook RT 过期")
+        self.assertEqual(result["error_label"], "Outlook 收信授权失效")
+        self.assertIn("邮箱账号本身可能仍然有效", result["error_hint"])
+        self.assertFalse(result["retryable"])
+
+    def test_classifies_microsoft_expired_grant_code(self) -> None:
+        result = classify_mail_fetch_error(
+            "IMAP canonical token failed: AADSTS70000: The user could not be authenticated as the grant is expired.",
+            "microsoft",
+        )
+
+        self.assertEqual(result["error_code"], "outlook_refresh_expired")
         self.assertFalse(result["retryable"])
 
 

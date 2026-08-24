@@ -25,6 +25,7 @@
       sortAccounts,
       dedupeAccounts,
       accountCategoryOptionsBase,
+      activityForAccount,
     } = helpers;
 
     const {
@@ -81,9 +82,11 @@
       const category = els.mailboxCategoryFilter.value;
       const query = els.mailboxSearch.value.trim().toLowerCase();
       const source = state.mailboxSourceFilter || "all";
+      const activityFilter = els.mailboxActivityFilter?.value || "all";
       return state.accounts.filter((account) => {
         if (source !== "all" && accountSourceGroup(account) !== source) return false;
         if (category !== "all" && account.category !== category) return false;
+        if (activityFilter !== "all" && activityForAccount?.(account)?.key !== activityFilter) return false;
         if (query && !account.email.toLowerCase().includes(query)) return false;
         return true;
       });
@@ -95,6 +98,7 @@
         els.mailboxCategoryFilter?.value || "all",
         els.mailboxSearch?.value.trim().toLowerCase() || "",
         state.mailboxSourceFilter || "all",
+        els.mailboxActivityFilter?.value || "all",
       ]);
     }
 
@@ -185,19 +189,21 @@
         const stateClass = statusClass(account.last_status);
         const sourceText = SOURCE_FILTER_LABELS[accountSourceGroup(account)] || "其他";
         const category = account.category || EMPTY_CATEGORY_LABEL;
+        const activity = activityForAccount?.(account) || { key: "pending", label: "" };
         const title = [
           account.email,
           `分组：${category}`,
           sourceText,
+          activity.detail || activity.label,
           statusLabel(account),
           account.last_error_label || account.last_error || "",
         ].filter(Boolean).join(" · ");
         return `
-        <div class="mailbox-row refresh-state-${escapeHtml(stateClass)}${state.activeMailboxId === account.id ? " active" : ""}" data-id="${escapeHtml(account.id)}">
+        <div class="mailbox-row refresh-state-${escapeHtml(stateClass)} activity-${escapeHtml(activity.key)}${state.activeMailboxId === account.id ? " active" : ""}" data-id="${escapeHtml(account.id)}">
           <input class="mailbox-check" type="checkbox" ${state.selected.has(account.id) ? "checked" : ""} title="${escapeHtml(title)}">
           <button class="mailbox-row-main" type="button" title="${escapeHtml(title)}">
             <strong>${escapeHtml(account.email)}</strong>
-            <em>${escapeHtml(category)}</em>
+            <span class="mailbox-meta"><em>${escapeHtml(category)}</em>${activity.label ? `<i>${escapeHtml(activity.label)}</i>` : ""}</span>
           </button>
           <button class="icon danger" type="button" aria-label="删除">×</button>
         </div>

@@ -2,6 +2,7 @@
   function createMailboxMessageView(config = {}) {
     const {
       typeLabels = {},
+      serviceLabels = {},
       emptyCategoryLabel = "未分组",
       escapeHtml = (value) => String(value ?? ""),
     } = config;
@@ -12,6 +13,7 @@
         ...message,
         category: message.category === "默认" ? "" : (message.category || ""),
         mail_type: normalizeMailType(message.mail_type, message),
+        mail_service: normalizeMailService(message.mail_service, message),
       }));
     }
 
@@ -32,6 +34,31 @@
       if (text === "reset") return "security";
       if (text === "billing" || text === "newsletter") return "promotion";
       return ["verification", "invite", "security", "promotion", "banned", "other"].includes(text) ? text : "other";
+    }
+
+    function normalizeMailService(value, message = null) {
+      const text = String(value || "").trim().toLowerCase();
+      const haystack = [
+        text,
+        message?.mail_service_label,
+        message?.sender,
+        message?.subject,
+        message?.preview,
+        message?.body,
+      ].map((item) => String(item || "").toLowerCase()).join(" ");
+      const patterns = [
+        ["openai", /openai\.com|chatgpt\.com|\bchatgpt\b|\bopenai\b/],
+        ["microsoft", /microsoft\.com|accountprotection\.microsoft\.com|outlook\.com|office365|\bmicrosoft\b/],
+        ["google", /google\.com|gmail\.com|\bgoogle\b/],
+        ["apple", /apple\.com|icloud\.com|apple id|\bicloud\b/],
+        ["github", /github\.com|\bgithub\b/],
+        ["cloudflare", /cloudflare\.com|\bcloudflare\b/],
+        ["amazon", /amazon\.com|amazonaws\.com|aws\.amazon\.com|amazon web services/],
+        ["discord", /discord\.com|\bdiscord\b/],
+      ];
+      const matched = patterns.find(([, pattern]) => pattern.test(haystack));
+      if (matched) return matched[0];
+      return ["openai", "microsoft", "google", "apple", "github", "cloudflare", "amazon", "discord", "other"].includes(text) ? text : "other";
     }
 
     function htmlToPlainText(value) {
@@ -159,6 +186,7 @@
       }
       const codes = Array.isArray(message.codes) ? message.codes : [];
       const normalizedType = normalizeMailType(message.mail_type, message);
+      const normalizedService = normalizeMailService(message.mail_service, message);
       const visibleCodes = codes.slice(0, 3);
       const hiddenCodeCount = Math.max(0, codes.length - visibleCodes.length);
       const codeBlock = codes.length
@@ -178,6 +206,7 @@
     <h3>${escapeHtml(message.subject || "(无主题)")}</h3>
     <div class="detail-meta">
       <span>${escapeHtml(typeLabels[normalizedType] || "其他")}</span>
+      <span>${escapeHtml(serviceLabels[normalizedService] || message.mail_service_label || "其他服务")}</span>
       <span>${escapeHtml(message.sender || "-")}</span>
       <span>${escapeHtml(message.account || "-")}</span>
       <span>${escapeHtml(formatTime(message.received_at))}</span>
@@ -196,6 +225,7 @@
     return {
       normalizeStoredMessages,
       normalizeMailType,
+      normalizeMailService,
       htmlToPlainText,
       normalizePlainMailBody,
       renderPlainMailBody,

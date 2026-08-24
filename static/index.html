@@ -85,6 +85,12 @@
             </div>
             <div class="mailbox-tools">
               <select id="mailboxCategoryFilter"></select>
+              <select id="mailboxActivityFilter" aria-label="邮箱活跃度">
+                <option value="all">全部活跃度</option>
+                <option value="active">近 30 天有邮件</option>
+                <option value="idle">30 天未见邮件</option>
+                <option value="unused">缓存无邮件</option>
+              </select>
               <button id="enqueueSelectedRefreshBtn" type="button" disabled>加入刷新队列</button>
               <button id="addCategoryBtn" type="button">添加分组</button>
               <button id="groupByImportDateBtn" type="button">按导入时间分组</button>
@@ -112,7 +118,6 @@
             <h1>邮箱取件</h1>
           </div>
           <div class="search-grid">
-            <input id="queryInput" placeholder="搜索主题、正文、验证码、链接、邮箱">
             <input id="senderInput" placeholder="发件人">
             <select id="sourceFilter">
               <option value="all">全部来源</option>
@@ -155,6 +160,19 @@
               <h2>邮件列表</h2>
               <div class="pager-tools">
                 <div class="pager-filters">
+                  <input id="queryInput" type="search" placeholder="搜索主题、正文、发件人或对应邮箱">
+                  <select id="serviceFilter" aria-label="邮件服务">
+                    <option value="all">全部服务</option>
+                    <option value="openai">OpenAI</option>
+                    <option value="microsoft">Microsoft</option>
+                    <option value="google">Google</option>
+                    <option value="apple">Apple</option>
+                    <option value="github">GitHub</option>
+                    <option value="cloudflare">Cloudflare</option>
+                    <option value="amazon">Amazon / AWS</option>
+                    <option value="discord">Discord</option>
+                    <option value="other">其他服务</option>
+                  </select>
                   <select id="typeFilter" aria-label="邮件类型">
                     <option value="all">全部类型</option>
                     <option value="verification">验证码</option>

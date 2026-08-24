@@ -13,6 +13,7 @@ class MessageQueryServiceTests(unittest.TestCase):
             "sender": "",
             "source": "all",
             "mail_type": "all",
+            "service": "all",
             "category": "all",
             "account": "",
             "accounts": [],
@@ -26,6 +27,7 @@ class MessageQueryServiceTests(unittest.TestCase):
             "sender": ["ops@example.com"],
             "source": ["microsoft"],
             "mail_type": ["verification"],
+            "service": ["openai"],
             "category": ["inbox"],
             "account": ["user@example.com"],
             "accounts": ["a@example.com", "", "b@example.com"],
@@ -38,6 +40,7 @@ class MessageQueryServiceTests(unittest.TestCase):
             "sender": "ops@example.com",
             "source": "microsoft",
             "mail_type": "verification",
+            "service": "openai",
             "category": "inbox",
             "account": "user@example.com",
             "accounts": ["a@example.com", "b@example.com"],
@@ -72,6 +75,7 @@ class MessageQueryServiceTests(unittest.TestCase):
         self.assertEqual(result["limit"], 1)
         self.assertEqual(len(result["messages"]), 1)
         self.assertEqual(result["messages"][0]["subject"], "again")
+        self.assertEqual(result["account_activity"]["a@example.com"]["count"], 2)
 
     def test_workspace_messages_response_clamps_bad_limit_offset(self):
         service = MessageQueryService(
@@ -89,6 +93,23 @@ class MessageQueryServiceTests(unittest.TestCase):
 
         self.assertEqual(result["limit"], 80)
         self.assertEqual(result["offset"], 0)
+
+    def test_account_activity_compares_mixed_mail_date_formats(self):
+        service = MessageQueryService(
+            load_workspace_messages=lambda workspace_id: [
+                {"account": "user@example.com", "received_at": "Thu, 31 Jul 2026 22:00:00 +0000"},
+                {"account": "user@example.com", "received_at": "2026-08-01T01:00:00+00:00"},
+            ],
+            filter_messages=lambda rows, payload: rows,
+            mail_type_labels={},
+        )
+
+        result = service.workspace_messages_response("ws_demo", {})
+
+        self.assertEqual(result["account_activity"]["user@example.com"], {
+            "count": 2,
+            "last_received_at": "2026-08-01T01:00:00+00:00",
+        })
 
     def test_path_messages_response_clamps_bad_limit_offset(self):
         service = MessageQueryService(

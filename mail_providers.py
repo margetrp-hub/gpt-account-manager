@@ -32,7 +32,7 @@ MAIL_FETCH_ERROR_LABELS = {
     "temp_api_http_error": "临时邮箱 API 异常",
     "outlook_credential_format": "Outlook 凭证格式错误",
     "outlook_client_mismatch": "Outlook client_id 不匹配",
-    "outlook_refresh_expired": "Outlook RT 过期",
+    "outlook_refresh_expired": "Outlook 收信授权失效",
     "outlook_reauth_required": "Outlook 需要重新授权",
     "outlook_scope_missing": "Outlook 权限不足",
     "graph_token_failed": "Graph 授权失败",
@@ -188,7 +188,7 @@ def classify_mail_fetch_error(raw: str, source: str = "") -> dict[str, Any]:
         retryable = False
     elif "invalid_grant" in lowered or "expired" in lowered or "revoked" in lowered:
         code = "outlook_refresh_expired"
-        hint = "Outlook refresh_token 已过期或被撤销，需要重新生成后导入。"
+        hint = "邮箱账号本身可能仍然有效，但当前 refresh_token 已过期或被撤销；请重新生成并导入新的 OAuth 收信凭证。"
         retryable = False
     elif "graph token failed" in lowered:
         code = "graph_token_failed"

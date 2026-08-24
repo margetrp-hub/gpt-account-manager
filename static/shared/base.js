@@ -1,6 +1,7 @@
 (function initSharedBase() {
   const WORKSPACE_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_.-]{5,63}$/;
   const DEFAULT_WORKSPACE_KEY = "ctgptm.workspaceId";
+  const DEFAULT_WORKSPACE_COOKIE = "ctgptm_workspace_id";
   const DEFAULT_ADMIN_TOKEN_KEY = "ctgptm.admin.toolToken";
   const DEFAULT_WORKSPACE_HISTORY_KEY = "ctgptm.workspaceHistory";
   const WORKSPACE_SCOPED_PREFIXES = Object.freeze({
@@ -45,6 +46,30 @@
     }
   }
 
+  function readWorkspaceCookie(cookieKey = DEFAULT_WORKSPACE_COOKIE) {
+    try {
+      const prefix = `${encodeURIComponent(cookieKey)}=`;
+      const row = String(document.cookie || "")
+        .split(";")
+        .map((item) => item.trim())
+        .find((item) => item.startsWith(prefix));
+      const value = row ? decodeURIComponent(row.slice(prefix.length)) : "";
+      return WORKSPACE_ID_PATTERN.test(value) ? value : "";
+    } catch {
+      return "";
+    }
+  }
+
+  function writeWorkspaceCookie(workspaceId, cookieKey = DEFAULT_WORKSPACE_COOKIE) {
+    if (!WORKSPACE_ID_PATTERN.test(String(workspaceId || ""))) return;
+    try {
+      const secure = window.location?.protocol === "https:" ? "; Secure" : "";
+      document.cookie = `${encodeURIComponent(cookieKey)}=${encodeURIComponent(workspaceId)}; Path=/; Max-Age=31536000; SameSite=Lax${secure}`;
+    } catch {
+      // localStorage remains the primary workspace pointer when cookies are unavailable.
+    }
+  }
+
   function rememberWorkspaceId(workspaceId, options = {}) {
     if (!WORKSPACE_ID_PATTERN.test(String(workspaceId || ""))) return "";
     const storageKey = options.historyStorageKey || DEFAULT_WORKSPACE_HISTORY_KEY;
@@ -65,6 +90,7 @@
     ].slice(0, 24);
     localStorage.setItem(storageKey, JSON.stringify(next));
     localStorage.setItem(currentStorageKey, workspaceId);
+    writeWorkspaceCookie(workspaceId, options.cookieKey || DEFAULT_WORKSPACE_COOKIE);
     return workspaceId;
   }
 
@@ -89,6 +115,10 @@
     if (WORKSPACE_ID_PATTERN.test(existing)) {
       rememberWorkspaceId(existing, { currentStorageKey: storageKey });
       return existing;
+    }
+    const cookieWorkspace = readWorkspaceCookie();
+    if (cookieWorkspace) {
+      return rememberWorkspaceId(cookieWorkspace, { currentStorageKey: storageKey });
     }
     const next = `ws_${crypto.randomUUID().replace(/-/g, "")}`;
     return rememberWorkspaceId(next, { currentStorageKey: storageKey });
@@ -115,6 +145,13 @@
     if (WORKSPACE_ID_PATTERN.test(existing)) {
       rememberWorkspaceId(existing, { currentStorageKey: storageKey });
       return existing;
+    }
+    const cookieWorkspace = readWorkspaceCookie(options.cookieKey || DEFAULT_WORKSPACE_COOKIE);
+    if (cookieWorkspace) {
+      return rememberWorkspaceId(cookieWorkspace, {
+        currentStorageKey: storageKey,
+        cookieKey: options.cookieKey,
+      });
     }
     const next = options.fallbackWorkspaceId && WORKSPACE_ID_PATTERN.test(options.fallbackWorkspaceId)
       ? options.fallbackWorkspaceId

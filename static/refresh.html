@@ -192,6 +192,12 @@
                 <b>接码</b>
               </summary>
               <div class="refresh-config-body phone-pool-panel">
+                <div class="phone-flow-steps" aria-label="接码流程">
+                  <span data-phone-step="provider"><b>1</b><em>连接平台</em></span>
+                  <span data-phone-step="numbers"><b>2</b><em>同步号码</em></span>
+                  <span data-phone-step="binding"><b>3</b><em>绑定账号</em></span>
+                  <span data-phone-step="code"><b>4</b><em>接收验证码</em></span>
+                </div>
                 <div class="phone-mode-row">
                   <div class="phone-mode-control">
                     <span>使用方式</span>
@@ -216,61 +222,69 @@
                         <option value="smsbower">SMSBower</option>
                       </select>
                     </label>
-                    <div class="phone-provider-actions" data-phone-provider="standard">
-                      <button id="verifyPhoneProvider" type="button">验证连接</button>
-                      <button id="syncPhoneProviderActivations" type="button">同步活跃订单</button>
-                    </div>
-                  </div>
-                  <div class="phone-provider-details">
-                    <label data-phone-provider="custom">
-                      <span>取码 API 地址</span>
+                    <label class="phone-provider-credential" data-phone-provider="custom">
+                      <span>取码 API</span>
                       <input id="phoneApiUrl" placeholder="https://api.example.com/sms?phone={phone}">
                     </label>
-                    <label data-phone-provider="standard">
+                    <label class="phone-provider-credential" data-phone-provider="standard">
                       <span>API Key</span>
-                      <input id="phoneApiKey" type="password" autocomplete="off" placeholder="HeroSMS / SMSBower API Key">
+                      <input id="phoneApiKey" type="password" autocomplete="off" placeholder="接码平台 API Key">
                     </label>
-                    <label data-phone-provider="standard">
-                      <span>兼容接口地址（可选）</span>
-                      <input id="phoneProviderEndpoint" placeholder="留空使用平台默认地址">
-                    </label>
+                    <div class="phone-provider-actions" data-phone-provider="standard">
+                      <button id="syncPhoneProviderActivations" class="primary" type="button">连接并同步</button>
+                    </div>
                   </div>
-                  <p class="phone-provider-note" data-phone-provider="standard">仅同步和管理你已有的活跃订单，不会在此创建、购买或续费号码。</p>
                   <p class="phone-provider-note" data-phone-provider="custom">地址支持 <code>{phone}</code>、<code>{email}</code>、<code>{since}</code> 与 <code>{ts}</code> 占位符。</p>
+                  <details class="phone-advanced-settings" data-phone-provider="standard">
+                    <summary>高级设置</summary>
+                    <div>
+                      <label>
+                        <span>兼容接口地址</span>
+                        <input id="phoneProviderEndpoint" placeholder="留空使用平台默认地址">
+                      </label>
+                      <button id="verifyPhoneProvider" type="button">仅验证连接</button>
+                      <p class="phone-provider-note">只同步和管理已有订单，不会自动购买或续费号码。</p>
+                    </div>
+                  </details>
                 </section>
                 <section class="phone-flow-section phone-number-section">
                   <div class="phone-section-heading">
-                    <strong>号码与账号绑定</strong>
+                    <strong>号码与绑定</strong>
                     <span id="phoneBindingTarget" class="phone-binding-target">未选中刷新账号</span>
                   </div>
-                  <div class="phone-pool-form">
-                    <label>
-                      <span>手机号</span>
-                      <input id="phoneNumber" placeholder="+12025550123">
-                    </label>
-                    <label data-phone-provider="standard">
-                      <span>订单 ID</span>
-                      <input id="phoneActivationId" placeholder="已有激活订单 ID">
-                    </label>
-                    <button id="addPhoneEntry" type="button">保存绑定</button>
+                  <div class="phone-code-panel" hidden>
+                    <div>
+                      <strong id="phoneCodeAccount">未选中队列账号</strong>
+                      <span id="phoneCodeCurrent">手机验证码：-</span>
+                    </div>
+                    <button id="saveManualPhoneCode" type="button">手动填码</button>
+                    <button id="pollSelectedPhone" type="button">立即取码</button>
                   </div>
-                  <p class="phone-binding-note">1 对 1 会绑定到当前勾选的刷新账号；批量池仅保存空闲号码，执行时按队列顺序分配。</p>
+                  <details class="phone-manual-entry" id="phoneManualEntry">
+                    <summary>手动添加号码</summary>
+                    <div>
+                      <div class="phone-pool-form">
+                        <label>
+                          <span>手机号</span>
+                          <input id="phoneNumber" placeholder="+12025550123">
+                        </label>
+                        <label data-phone-provider="standard">
+                          <span>订单 ID</span>
+                          <input id="phoneActivationId" placeholder="已有激活订单 ID">
+                        </label>
+                        <button id="addPhoneEntry" type="button">保存绑定</button>
+                      </div>
+                      <p class="phone-binding-note">1 对 1 绑定当前勾选账号；批量池按刷新队列顺序分配。</p>
+                    </div>
+                  </details>
+                  <details class="phone-batch-import" id="phoneBatchPanel">
+                    <summary>批量导入已有号码</summary>
+                    <div>
+                      <textarea id="phoneBatchText" rows="3" spellcheck="false" placeholder="手机号----接码 API----绑定邮箱；或 手机号----HeroSMS/SMSBower----API Key----订单 ID----绑定邮箱(可选)----接口地址(可选)"></textarea>
+                      <button id="importPhoneBatch" type="button">导入</button>
+                    </div>
+                  </details>
                 </section>
-                <div class="phone-code-panel" hidden>
-                  <div>
-                    <strong id="phoneCodeAccount">未选中队列账号</strong>
-                    <span id="phoneCodeCurrent">手机验证码：-</span>
-                  </div>
-                  <button id="saveManualPhoneCode" type="button">手动填码</button>
-                  <button id="pollSelectedPhone" type="button">为选中账号取码</button>
-                </div>
-                <details class="phone-batch-import" id="phoneBatchPanel">
-                  <summary>批量导入已有号码</summary>
-                  <div>
-                    <textarea id="phoneBatchText" rows="3" spellcheck="false" placeholder="手机号----接码 API----绑定邮箱；或 手机号----HeroSMS/SMSBower----API Key----订单 ID----绑定邮箱(可选)----接口地址(可选)"></textarea>
-                    <button id="importPhoneBatch" type="button">导入</button>
-                  </div>
-                </details>
                 <section class="phone-flow-section phone-orders-section">
                   <div class="phone-section-heading">
                     <strong>号码与订单</strong>

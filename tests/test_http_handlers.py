@@ -137,9 +137,10 @@ class HttpHandlersTests(unittest.TestCase):
             load_workspace_generic_accounts=lambda workspace_id: {"g": DummyItem("g@example.com")},
             load_refresh_results_for_workspace=lambda workspace_id: [{"email": "r@example.com"}],
             load_login_history_for_workspace=lambda workspace_id: [{"job_id": "j1"}],
-            hydrate_login_mail_credentials=lambda payload, workspace: payload.update({"hydrated": workspace}),
-            fetch_transient_client_mail=lambda payload: {"messages": [], "payload": payload},
-            persist_workspace_mail_fetch_result=lambda workspace, result: {"workspace": workspace, "result": result},
+            fetch_client_mail=lambda payload, workspace: {
+                "workspace": workspace,
+                "result": {"payload": {**payload, "hydrated": workspace}},
+            },
             start_client_mail_fetch_job=lambda payload, workspace: {"workspace": workspace, "job": payload},
             delete_workspace_mail_messages=lambda payload, workspace: {"workspace": workspace, "deleted": payload},
             check_proxy_egress=lambda payload: {"proxy": payload},

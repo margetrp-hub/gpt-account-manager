@@ -1061,6 +1061,11 @@ button:disabled {
   grid-column: 1 / -1;
 }
 
+#mailboxCategoryFilter,
+#mailboxActivityFilter {
+  grid-column: auto;
+}
+
 .mailbox-tools button {
   font-size: 11px;
   width: 100%;
@@ -1597,6 +1602,64 @@ body.mailbox-controls-collapsed .mailbox-panel {
   background: transparent;
 }
 
+.phone-flow-steps {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 5px;
+}
+
+.phone-flow-steps span {
+  min-width: 0;
+  min-height: 30px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 7px;
+  border: 1px solid rgba(142, 165, 199, 0.22);
+  border-radius: 7px;
+  background: rgba(248, 251, 255, 0.7);
+  color: #718198;
+  transition: border-color var(--motion-fast), background-color var(--motion-fast), color var(--motion-fast), transform var(--motion-fast);
+}
+
+.phone-flow-steps b {
+  width: 18px;
+  height: 18px;
+  flex: 0 0 18px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  background: rgba(142, 165, 199, 0.18);
+  font-size: 10px;
+}
+
+.phone-flow-steps em {
+  min-width: 0;
+  overflow: hidden;
+  font-size: 10.5px;
+  font-style: normal;
+  font-weight: 850;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.phone-flow-steps span.is-current {
+  border-color: rgba(37, 99, 235, 0.35);
+  background: rgba(219, 234, 254, 0.72);
+  color: #1d4ed8;
+}
+
+.phone-flow-steps span.is-done {
+  border-color: rgba(22, 163, 74, 0.24);
+  background: rgba(240, 253, 244, 0.76);
+  color: #15803d;
+}
+
+.phone-flow-steps span.is-done b {
+  background: #16a34a;
+  color: #fff;
+}
+
 .phone-mode-row,
 .phone-section-heading {
   min-width: 0;
@@ -1664,10 +1727,27 @@ body.mailbox-controls-collapsed .mailbox-panel {
 
 .phone-provider-toolbar {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-columns: minmax(130px, 0.55fr) minmax(220px, 1fr) auto;
   align-items: center;
   gap: 8px;
   min-width: 0;
+}
+
+.phone-provider-credential {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 5px;
+  color: #526983;
+  font-size: 11px;
+  font-weight: 850;
+  white-space: nowrap;
+}
+
+.phone-provider-credential input {
+  min-width: 0;
+  min-height: 28px;
 }
 
 .phone-provider-select {
@@ -1702,6 +1782,10 @@ body.mailbox-controls-collapsed .mailbox-panel {
   font-size: 11px;
   font-weight: 850;
   white-space: nowrap;
+}
+
+.phone-provider-actions button.primary {
+  color: #fff;
 }
 
 .phone-provider-status {
@@ -1764,6 +1848,79 @@ body.mailbox-controls-collapsed .mailbox-panel {
   font-size: 10px;
 }
 
+.phone-advanced-settings,
+.phone-manual-entry {
+  overflow: hidden;
+  border: 1px solid rgba(142, 165, 199, 0.18);
+  border-radius: 7px;
+  background: rgba(248, 251, 255, 0.54);
+}
+
+.phone-advanced-settings summary,
+.phone-manual-entry summary {
+  min-height: 27px;
+  display: flex;
+  align-items: center;
+  padding: 0 8px;
+  cursor: pointer;
+  color: #526983;
+  font-size: 11px;
+  font-weight: 850;
+  list-style: none;
+}
+
+.phone-advanced-settings summary::-webkit-details-marker,
+.phone-manual-entry summary::-webkit-details-marker {
+  display: none;
+}
+
+.phone-advanced-settings summary::before,
+.phone-manual-entry summary::before {
+  content: "+";
+  width: 16px;
+  display: inline-flex;
+  justify-content: center;
+  margin-right: 4px;
+  color: #2563eb;
+  font-size: 14px;
+}
+
+.phone-advanced-settings[open] summary::before,
+.phone-manual-entry[open] summary::before {
+  content: "-";
+}
+
+.phone-advanced-settings > div,
+.phone-manual-entry > div {
+  display: grid;
+  gap: 6px;
+  padding: 0 7px 7px;
+}
+
+.phone-advanced-settings[open] > div,
+.phone-manual-entry[open] > div,
+.phone-batch-import[open] > div {
+  animation: softReveal var(--motion-med) ease both;
+}
+
+.phone-advanced-settings > div {
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: end;
+}
+
+.phone-advanced-settings label {
+  min-width: 0;
+  display: grid;
+  gap: 3px;
+  color: #526983;
+  font-size: 10px;
+  font-weight: 850;
+}
+
+.phone-advanced-settings .phone-provider-note {
+  grid-column: 1 / -1;
+}
+
 .phone-provider-details label[data-phone-provider="custom"] {
   grid-column: 1 / -1;
 }
@@ -1798,6 +1955,10 @@ body.mailbox-controls-collapsed .mailbox-panel {
 
 .phone-mode-tabs input {
   position: absolute;
+  width: 1px;
+  min-height: 0;
+  height: 1px;
+  margin: 0;
   opacity: 0;
   pointer-events: none;
 }
@@ -2361,6 +2522,22 @@ body.mailbox-controls-collapsed .mailbox-panel {
   font-weight: 800;
 }
 
+.mailbox-meta i {
+  max-width: 92px;
+  overflow: hidden;
+  color: #6a7c94;
+  font-size: 9.5px;
+  font-style: normal;
+  font-weight: 800;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mailbox-row.activity-unused .mailbox-meta i,
+.mailbox-row.activity-idle .mailbox-meta i {
+  color: #a16207;
+}
+
 .mailbox-meta {
   display: flex;
   min-width: fit-content;
@@ -2475,7 +2652,7 @@ body.mailbox-controls-collapsed .mailbox-panel {
 
 .search-grid {
   display: grid;
-  grid-template-columns: minmax(180px, 1.5fr) minmax(110px, 0.7fr) 110px 110px 104px 88px;
+  grid-template-columns: minmax(150px, 1fr) 110px 110px 104px 88px;
   gap: 5px;
   align-items: center;
 }
@@ -2954,8 +3131,18 @@ body.mailbox-controls-collapsed .mailbox-panel {
 
 .mail-list-panel .pager-filters {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 72px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 6px;
+}
+
+.mail-list-panel #queryInput {
+  grid-column: 1 / -1;
+  width: 100%;
+  min-width: 0;
+  height: 28px;
+  min-height: 28px;
+  padding: 0 8px;
+  font-size: 11px;
 }
 
 .mail-list-panel .pager-actions {
@@ -2991,12 +3178,14 @@ body.mailbox-controls-collapsed .mailbox-panel {
 }
 
 .mail-list-panel .pager-tools .ghost.danger {
-  width: auto;
+  width: 100%;
   min-width: 0;
   max-width: 100%;
   padding: 0 8px;
+  overflow: hidden;
+  text-overflow: ellipsis;
   white-space: nowrap;
-  justify-self: end;
+  justify-self: stretch;
 }
 
 .detail-actions {
@@ -3030,12 +3219,13 @@ body.mailbox-controls-collapsed .mailbox-panel {
   gap: 3px;
   text-align: left;
   width: 100%;
-  min-height: 58px;
-  padding: 7px 8px;
+  min-height: 58px !important;
+  padding: 7px 8px !important;
   border: 1px solid rgba(209, 224, 244, 0.78);
   border-radius: 8px;
   background: rgba(255, 255, 255, 0.72);
   color: var(--ink);
+  white-space: normal !important;
   box-shadow: none;
   transition: transform var(--motion-fast), border-color var(--motion-fast), background-color var(--motion-fast), box-shadow var(--motion-fast);
 }
@@ -3079,8 +3269,13 @@ body.mailbox-controls-collapsed .mailbox-panel {
   align-items: center;
   gap: 4px;
   flex: 0 0 auto;
-  max-width: 42%;
+  max-width: 58%;
   min-width: 0;
+}
+
+.mail-item-top .mail-service-label {
+  background: rgba(37, 99, 235, 0.09);
+  color: #315a9d;
 }
 
 .mail-delete-one {
@@ -4580,11 +4775,14 @@ body.modal-open {
   color: var(--ink);
   text-decoration: none;
   box-shadow: var(--shadow-soft);
+  transition: transform var(--motion-fast), border-color var(--motion-fast), background-color var(--motion-fast), box-shadow var(--motion-fast);
 }
 
 .plugin-card:hover {
   border-color: rgba(47, 117, 255, 0.32);
   background: rgba(255, 255, 255, 0.94);
+  box-shadow: 0 12px 26px rgba(47, 117, 255, 0.11);
+  transform: translateY(-2px);
 }
 
 .plugin-card span {
@@ -5183,12 +5381,21 @@ body.modal-open {
 
   .refresh-layout {
     grid-template-columns: 1fr;
+    height: auto;
+    max-height: none;
+    overflow: visible;
+    align-items: start;
   }
 
   .refresh-source-panel,
   .refresh-console,
   .refresh-log-panel {
+    height: auto;
     min-height: auto;
+  }
+
+  .refresh-console {
+    overflow: visible;
   }
 
   .refresh-source-panel .mailbox-list,
@@ -5207,6 +5414,7 @@ body.modal-open {
   .phone-pool-form,
   .phone-provider-details,
   .phone-provider-toolbar,
+  .phone-advanced-settings > div,
   .phone-batch-import > div,
   .credential-hint-bar {
     grid-template-columns: 1fr;
@@ -5216,6 +5424,10 @@ body.modal-open {
   .phone-section-heading {
     align-items: stretch;
     flex-direction: column;
+  }
+
+  .phone-flow-steps {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
   .phone-pool-row {
@@ -5405,10 +5617,13 @@ body.modal-open {
   }
 
   .search-grid {
-    grid-template-columns: minmax(170px, 1fr) minmax(100px, 0.65fr) repeat(3, minmax(88px, 0.5fr)) 96px;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
     gap: 6px;
-    overflow-x: auto;
-    padding-bottom: 2px;
+    overflow: visible;
+  }
+
+  .search-grid #senderInput {
+    grid-column: 1 / -1;
   }
 
   .search-grid input,

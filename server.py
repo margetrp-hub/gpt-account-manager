@@ -253,6 +253,17 @@ MAIL_TYPE_LABELS = {
     "banned": "banned",
     "other": "other",
 }
+MAIL_SERVICE_LABELS = {
+    "openai": "OpenAI",
+    "microsoft": "Microsoft",
+    "google": "Google",
+    "apple": "Apple",
+    "github": "GitHub",
+    "cloudflare": "Cloudflare",
+    "amazon": "Amazon / AWS",
+    "discord": "Discord",
+    "other": "其他",
+}
 DEFAULT_HTTP_HEADERS = {
     "Accept": "application/json",
     "User-Agent": (
@@ -279,6 +290,7 @@ LOCAL_OAUTH_PORT = int(os.environ.get("MAIL_PICKUP_LOCAL_OAUTH_PORT", "1455") or
 PLAYWRIGHT_MAX_CONCURRENCY = max(1, min(int(os.environ.get("MAIL_PICKUP_PLAYWRIGHT_MAX_CONCURRENCY", "2") or 2), 2))
 PLAYWRIGHT_SEMAPHORE = threading.BoundedSemaphore(PLAYWRIGHT_MAX_CONCURRENCY)
 MAIL_FETCH_MAX_CONCURRENCY = max(1, min(int(os.environ.get("MAIL_PICKUP_FETCH_CONCURRENCY", "8") or 8), 16))
+MICROSOFT_PROVIDER_RETRIES = max(0, min(int(os.environ.get("MAIL_PICKUP_PROVIDER_RETRIES", "2") or 2), 3))
 
 
 @dataclass
@@ -2394,6 +2406,14 @@ def network_health_payload() -> dict[str, Any]:
     }
 
 
+def apply_microsoft_token_response(account: MailAccount, payload: dict[str, Any]) -> str:
+    refreshed_token = coerce_text(payload.get("refresh_token"))
+    if refreshed_token and refreshed_token != account.refresh_token:
+        account.refresh_token = refreshed_token
+        account.updated_at = iso_now()
+    return coerce_text(payload.get("access_token"))
+
+
 def get_graph_token(account: MailAccount) -> str:
     attempts = [
         ("https://login.microsoftonline.com/common/oauth2/v2.0/token", {
@@ -2413,7 +2433,7 @@ def get_graph_token(account: MailAccount) -> str:
     for url, data in attempts:
         try:
             payload = http_json(url, method="POST", data=data)
-            token = payload.get("access_token")
+            token = apply_microsoft_token_response(account, payload)
             if token:
                 return token
             last_error = str(payload)
@@ -2431,7 +2451,7 @@ def refresh_microsoft_access_token(
     for url, data in attempts:
         try:
             payload = http_json(url, method="POST", data=data)
-            token = payload.get("access_token")
+            token = apply_microsoft_token_response(account, payload)
             if token:
                 return token
             last_error = str(payload)
@@ -2442,34 +2462,38 @@ def refresh_microsoft_access_token(
 
 def get_imap_token(account: MailAccount) -> tuple[str, str]:
     attempts = [
+        ("https://login.microsoftonline.com/consumers/oauth2/v2.0/token", {
+            "client_id": account.client_id,
+            "grant_type": "refresh_token",
+            "refresh_token": account.refresh_token,
+            "scope": "https://outlook.office.com/IMAP.AccessAsUser.All offline_access",
+        }, "outlook.live.com"),
+        ("https://login.microsoftonline.com/common/oauth2/v2.0/token", {
+            "client_id": account.client_id,
+            "grant_type": "refresh_token",
+            "refresh_token": account.refresh_token,
+            "scope": "https://outlook.office.com/IMAP.AccessAsUser.All offline_access",
+        }, "outlook.office365.com"),
+        # Legacy personal-account endpoint. It is retained for older RTs that
+        # were minted without an explicit scope, after the canonical IMAP flow.
         ("https://login.live.com/oauth20_token.srf", {
             "client_id": account.client_id,
             "grant_type": "refresh_token",
             "refresh_token": account.refresh_token,
         }, "outlook.office365.com"),
+        # Some older Thunderbird credentials were issued with this resource
+        # scope. Keep it as a compatibility fallback, never as the primary path.
         ("https://login.microsoftonline.com/consumers/oauth2/v2.0/token", {
             "client_id": account.client_id,
             "grant_type": "refresh_token",
             "refresh_token": account.refresh_token,
-            "scope": "offline_access https://graph.microsoft.com/IMAP.AccessAsUser.All",
+            "scope": "https://graph.microsoft.com/IMAP.AccessAsUser.All offline_access",
         }, "outlook.live.com"),
         ("https://login.microsoftonline.com/common/oauth2/v2.0/token", {
             "client_id": account.client_id,
             "grant_type": "refresh_token",
             "refresh_token": account.refresh_token,
-            "scope": "offline_access https://graph.microsoft.com/IMAP.AccessAsUser.All",
-        }, "outlook.office365.com"),
-        ("https://login.microsoftonline.com/consumers/oauth2/v2.0/token", {
-            "client_id": account.client_id,
-            "grant_type": "refresh_token",
-            "refresh_token": account.refresh_token,
-            "scope": "offline_access https://outlook.office.com/IMAP.AccessAsUser.All",
-        }, "outlook.live.com"),
-        ("https://login.microsoftonline.com/common/oauth2/v2.0/token", {
-            "client_id": account.client_id,
-            "grant_type": "refresh_token",
-            "refresh_token": account.refresh_token,
-            "scope": "offline_access https://outlook.office.com/IMAP.AccessAsUser.All",
+            "scope": "https://graph.microsoft.com/IMAP.AccessAsUser.All offline_access",
         }, "outlook.office365.com"),
     ]
     last_error = ""
@@ -3137,12 +3161,16 @@ def normalize_message(**kwargs: Any) -> dict[str, Any]:
     text = strip_html(f"{subject}\n{body_text}\n{html_text}")
     links = extract_links(f"{body_text}\n{html_body}")
     codes = extract_codes(text)
-    mail_type = normalize_mail_type("", f"{kwargs.get('sender', '')} {subject} {text}")
+    classification_text = f"{kwargs.get('sender', '')} {subject} {text}"
+    mail_type = normalize_mail_type("", classification_text)
+    mail_service = normalize_mail_service("", classification_text)
     return {
         **kwargs,
         "source": kwargs.get("source", "microsoft"),
         "mail_type": mail_type,
         "mail_type_label": MAIL_TYPE_LABELS.get(mail_type, "other"),
+        "mail_service": mail_service,
+        "mail_service_label": MAIL_SERVICE_LABELS.get(mail_service, "其他"),
         "body": body_text[:6000],
         "html_body": html_body[:200000],
         "preview": " ".join((body_text or subject).split())[:260],
@@ -3214,6 +3242,25 @@ def normalize_mail_type(value: Any, text: str = "") -> str:
     return raw if raw in {"verification", "invite", "security", "promotion", "banned", "other"} else "other"
 
 
+def normalize_mail_service(value: Any, text: str = "") -> str:
+    raw = coerce_text(value).strip().lower()
+    haystack = f"{raw} {coerce_text(text)}".lower()
+    patterns = [
+        ("openai", ["openai.com", "chatgpt.com", "chatgpt", "openai"]),
+        ("microsoft", ["microsoft.com", "accountprotection.microsoft.com", "outlook.com", "office365", "microsoft"]),
+        ("google", ["google.com", "gmail.com", "google"]),
+        ("apple", ["apple.com", "icloud.com", "apple id", "icloud"]),
+        ("github", ["github.com", "github"]),
+        ("cloudflare", ["cloudflare.com", "cloudflare"]),
+        ("amazon", ["amazon.com", "amazonaws.com", "aws.amazon.com", "amazon web services"]),
+        ("discord", ["discord.com", "discord"]),
+    ]
+    for service, needles in patterns:
+        if any(needle in haystack for needle in needles):
+            return service
+    return raw if raw in MAIL_SERVICE_LABELS else "other"
+
+
 def sanitize_email_html(value: str) -> str:
     text = str(value or "")
     if not text:
@@ -3270,6 +3317,7 @@ def filter_messages(messages: list[dict[str, Any]], payload: dict[str, Any]) -> 
     sender = str(payload.get("sender", "")).strip().lower()
     source = str(payload.get("source", "all")).strip().lower()
     mail_type = str(payload.get("mail_type", "all")).strip().lower()
+    service = str(payload.get("service", "all")).strip().lower()
     category = str(payload.get("category", "all")).strip().lower()
     account = str(payload.get("account", "")).strip().lower()
     accounts_filter = {
@@ -3280,7 +3328,7 @@ def filter_messages(messages: list[dict[str, Any]], payload: dict[str, Any]) -> 
     filtered = []
     for message in messages:
         haystack = " ".join(str(message.get(key, "")) for key in [
-            "account", "sender", "subject", "preview", "body", "folder", "provider", "mail_type_label"
+            "account", "sender", "subject", "preview", "body", "folder", "provider", "mail_type_label", "mail_service_label"
         ]).lower()
         if query and query not in haystack:
             continue
@@ -3295,6 +3343,16 @@ def filter_messages(messages: list[dict[str, Any]], payload: dict[str, Any]) -> 
             ]),
         )
         if mail_type != "all" and mail_type != normalized_message_type:
+            continue
+        normalized_service = normalize_mail_service(
+            message.get("mail_service"),
+            " ".join(str(message.get(key, "")) for key in [
+                "sender", "subject", "preview", "body", "html_body", "mail_service_label",
+            ]),
+        )
+        message["mail_service"] = normalized_service
+        message["mail_service_label"] = MAIL_SERVICE_LABELS.get(normalized_service, "其他")
+        if service != "all" and service != normalized_service:
             continue
         if category != "all" and category != str(message.get("category", "")).lower():
             continue
@@ -3549,23 +3607,31 @@ def fetch_for_account(account: MailAccount, provider: str, limit: int, sender_fi
     used_provider = ""
     providers = microsoft_provider_sequence(provider)
     for current in providers:
-        try:
-            if current == "graph":
-                messages = fetch_graph_messages(account, limit=limit, sender_filter=sender_filter)
-            elif current == "imap":
-                messages = fetch_imap_messages(account, limit=limit, sender_filter=sender_filter)
-            elif current == "outlook":
-                messages = fetch_outlook_api_messages(account, limit=limit, sender_filter=sender_filter)
-            else:
-                raise RuntimeError(f"Unsupported provider: {current}")
-            account.last_status = "ok"
-            account.last_error = ""
-            used_provider = current
+        for attempt in range(MICROSOFT_PROVIDER_RETRIES + 1):
+            try:
+                if current == "graph":
+                    messages = fetch_graph_messages(account, limit=limit, sender_filter=sender_filter)
+                elif current == "imap":
+                    messages = fetch_imap_messages(account, limit=limit, sender_filter=sender_filter)
+                elif current == "outlook":
+                    messages = fetch_outlook_api_messages(account, limit=limit, sender_filter=sender_filter)
+                else:
+                    raise RuntimeError(f"Unsupported provider: {current}")
+                account.last_status = "ok"
+                account.last_error = ""
+                used_provider = current
+                break
+            except Exception as exc:
+                error_text = str(exc)
+                account.last_status = "error"
+                account.last_error = error_text[:500]
+                detail = classify_mail_fetch_error(error_text, "microsoft")
+                if not detail.get("retryable") or attempt >= MICROSOFT_PROVIDER_RETRIES:
+                    errors.append(f"{current}: {error_text}")
+                    break
+                time.sleep(0.75 * (attempt + 1))
+        if used_provider:
             break
-        except Exception as exc:
-            errors.append(f"{current}: {exc}")
-            account.last_status = "error"
-            account.last_error = str(exc)[:500]
     account.last_check_at = checked_at
     detail = pick_microsoft_fetch_error_detail(errors) if account.last_status != "ok" else {}
     result = {
@@ -6241,9 +6307,7 @@ def http_handlers() -> HttpHandlers:
             load_workspace_generic_accounts=load_workspace_generic_accounts,
             load_refresh_results_for_workspace=load_refresh_results_for_workspace,
             load_login_history_for_workspace=load_login_history_for_workspace,
-            hydrate_login_mail_credentials=hydrate_login_mail_credentials,
-            fetch_transient_client_mail=fetch_transient_client_mail,
-            persist_workspace_mail_fetch_result=persist_workspace_mail_fetch_result,
+            fetch_client_mail=fetch_client_mail,
             start_client_mail_fetch_job=start_client_mail_fetch_job,
             delete_workspace_mail_messages=delete_workspace_mail_messages,
             check_proxy_egress=check_proxy_egress,
@@ -8649,6 +8713,36 @@ def fetch_transient_client_mail(
     return MAIL_FETCH_SERVICE.fetch(payload, progress_callback=progress_callback)
 
 
+def prepare_client_mail_fetch_request(payload: dict[str, Any], workspace_id: str) -> Any:
+    workspace = normalize_workspace_id(workspace_id)
+    hydrate_login_mail_credentials(payload, workspace)
+    prepared = MAIL_FETCH_SERVICE.prepare_request(payload)
+    if prepared.total_targets <= 0:
+        raise RuntimeError("当前筛选下没有可刷新邮箱")
+    return prepared
+
+
+def persist_prepared_client_mail_fetch(
+    workspace_id: str,
+    prepared: Any,
+    result: dict[str, Any],
+) -> dict[str, Any]:
+    workspace = normalize_workspace_id(workspace_id)
+    MAILBOX_WORKSPACE_SERVICE.merge_fetched_targets_for_workspace(
+        workspace,
+        accounts=prepared.accounts,
+        temp_addresses=prepared.temp_addresses,
+        generic_accounts=prepared.generic_accounts,
+    )
+    return persist_workspace_mail_fetch_result(workspace, result)
+
+
+def fetch_client_mail(payload: dict[str, Any], workspace_id: str) -> dict[str, Any]:
+    prepared = prepare_client_mail_fetch_request(payload, workspace_id)
+    result = MAIL_FETCH_SERVICE.fetch_prepared(prepared)
+    return persist_prepared_client_mail_fetch(workspace_id, prepared, result)
+
+
 def mail_fetch_job_public(job: dict[str, Any]) -> dict[str, Any]:
     return {
         "job_id": job.get("job_id"),
@@ -8696,7 +8790,11 @@ def run_client_mail_fetch_job(job_id: str, payload: dict[str, Any], workspace_id
             result = MAIL_FETCH_SERVICE.fetch_prepared(prepared, progress_callback=lambda progress: set_mail_fetch_job(job_id, **progress))
         else:
             result = fetch_transient_client_mail(payload, progress_callback=lambda progress: set_mail_fetch_job(job_id, **progress))
-        lightweight = persist_workspace_mail_fetch_result(workspace, result)
+        lightweight = (
+            persist_prepared_client_mail_fetch(workspace, prepared, result)
+            if prepared is not None
+            else persist_workspace_mail_fetch_result(workspace, result)
+        )
         set_mail_fetch_job(job_id, status="success", processed=int(result.get("summary", {}).get("total") or 0), current_email="", result=lightweight)
     except Exception as exc:
         set_mail_fetch_job(job_id, status="failed", error=str(exc)[:500])
@@ -8704,10 +8802,7 @@ def run_client_mail_fetch_job(job_id: str, payload: dict[str, Any], workspace_id
 
 def start_client_mail_fetch_job(payload: dict[str, Any], workspace_id: str = "public") -> dict[str, Any]:
     workspace = normalize_workspace_id(workspace_id)
-    hydrate_login_mail_credentials(payload, workspace)
-    prepared = MAIL_FETCH_SERVICE.prepare_request(payload)
-    if prepared.total_targets <= 0:
-        raise RuntimeError("当前筛选下没有可刷新邮箱")
+    prepared = prepare_client_mail_fetch_request(payload, workspace)
     job_id = secrets.token_urlsafe(12)
     now = iso_now()
     job = {

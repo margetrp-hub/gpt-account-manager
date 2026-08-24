@@ -40,6 +40,18 @@ const TYPE_LABELS = {
   other: "其他",
 };
 
+const SERVICE_LABELS = {
+  openai: "OpenAI",
+  microsoft: "Microsoft",
+  google: "Google",
+  apple: "Apple",
+  github: "GitHub",
+  cloudflare: "Cloudflare",
+  amazon: "Amazon / AWS",
+  discord: "Discord",
+  other: "其他服务",
+};
+
 const SOURCE_FILTER_LABELS = {
   all: "全部",
   microsoft: "Outlook",
@@ -167,6 +179,7 @@ const els = {
   backupLocalBtn: document.querySelector("#backupLocalBtn"),
   restoreLocalFile: document.querySelector("#restoreLocalFile"),
   mailboxCategoryFilter: document.querySelector("#mailboxCategoryFilter"),
+  mailboxActivityFilter: document.querySelector("#mailboxActivityFilter"),
   mailboxSearch: document.querySelector("#mailboxSearch"),
   mailboxList: document.querySelector("#mailboxList"),
   usageBadge: document.querySelector("#usageBadge"),
@@ -181,6 +194,7 @@ const els = {
   sourceFilter: document.querySelector("#sourceFilter"),
   providerFilter: document.querySelector("#providerFilter"),
   typeFilter: document.querySelector("#typeFilter"),
+  serviceFilter: document.querySelector("#serviceFilter"),
   categoryFilter: document.querySelector("#categoryFilter"),
   syncBtn: document.querySelector("#syncBtn"),
   mailProgress: document.querySelector("#mailProgress"),
@@ -301,6 +315,7 @@ mailboxImportUiHelper = window.GAM?.mailboxImportUi?.createMailboxImportUiHelper
 
 mailboxMessageView = window.GAM?.mailboxMessageView?.createMailboxMessageView?.({
   typeLabels: TYPE_LABELS,
+  serviceLabels: SERVICE_LABELS,
   emptyCategoryLabel: EMPTY_CATEGORY_LABEL,
   escapeHtml,
 });
@@ -338,6 +353,8 @@ const state = {
   messages: [],
   messageTotal: 0,
   hiddenMessageCount: 0,
+  mailboxActivity: {},
+  mailboxActivityLoaded: false,
   messagesLoading: false,
   ignoredMessageKeys: new Set(loadJson(STORAGE_KEYS.ignoredMessages, [])),
   abnormalRows: normalizeStoredAbnormalRows(loadJson(STORAGE_KEYS.abnormalRows, [])),
@@ -1156,6 +1173,7 @@ mailboxWorkspace = window.GAM?.mailboxWorkspace?.createMailboxWorkspace?.({
     dedupeAccounts,
     preferRealSecret,
     accountCategoryOptionsBase,
+    activityForAccount: (account) => mailboxActivityFor(account),
   },
   callbacks: {
     storageKeys: {
@@ -1434,6 +1452,26 @@ function mailTypeLabel(message) {
   return TYPE_LABELS[normalized] || "其他";
 }
 
+function mailServiceLabel(message) {
+  const normalized = mailboxMessageView?.normalizeMailService?.(message?.mail_service, message) || "other";
+  return SERVICE_LABELS[normalized] || message?.mail_service_label || "其他服务";
+}
+
+function mailboxActivityFor(account) {
+  if (!state.mailboxActivityLoaded) return { key: "pending", label: "" };
+  const email = String(account?.email || "").trim().toLowerCase();
+  const activity = state.mailboxActivity[email] || {};
+  const count = Math.max(0, Number(activity.count || 0));
+  if (!count) return { key: "unused", label: "缓存无邮件", count: 0, lastReceivedAt: "" };
+  const lastReceivedAt = String(activity.last_received_at || "");
+  const timestamp = Date.parse(lastReceivedAt);
+  if (!Number.isFinite(timestamp)) return { key: "active", label: `${count} 封`, count, lastReceivedAt };
+  const days = Math.max(0, Math.floor((Date.now() - timestamp) / 86400000));
+  return days <= 30
+    ? { key: "active", label: "近 30 天活跃", count, lastReceivedAt }
+    : { key: "idle", label: "低活跃", detail: `${days} 天未见邮件`, count, lastReceivedAt };
+}
+
 function selectedMailTypeLabel() {
   const value = els.typeFilter?.value || "all";
   return value === "all" ? "" : (TYPE_LABELS[value] || value);
@@ -1511,7 +1549,7 @@ function mailKey(message) {
 }
 
 function saveIgnoredMessages() {
-  saveJson(STORAGE_KEYS.ignoredMessages, [...state.ignoredMessageKeys].slice(-1000));
+  saveJson(STORAGE_KEYS.ignoredMessages, [...state.ignoredMessageKeys].slice(-5000));
 }
 
 function isIgnoredMessage(message) {
@@ -1527,6 +1565,7 @@ function messageQueryParams() {
     sender: els.senderInput.value.trim(),
     source: els.sourceFilter.value || "all",
     mail_type: els.typeFilter?.value || "all",
+    service: els.serviceFilter?.value || "all",
     category: els.categoryFilter.value || "all",
   });
   if (state.activeMailboxEmail) params.set("account", state.activeMailboxEmail);
@@ -1570,6 +1609,14 @@ function applyLoadedMessages(loaded) {
   state.hiddenMessageCount = normalized.filter((message) => isIgnoredMessage(message)).length;
   state.messages = normalized.filter((message) => !isIgnoredMessage(message));
   state.messageTotal = Number(data.count ?? state.messages.length);
+  const nextActivity = data.account_activity && typeof data.account_activity === "object" ? data.account_activity : {};
+  const activityChanged = !state.mailboxActivityLoaded || JSON.stringify(nextActivity) !== JSON.stringify(state.mailboxActivity);
+  state.mailboxActivity = nextActivity;
+  state.mailboxActivityLoaded = true;
+  if (activityChanged) {
+    mailboxWorkspace?.invalidateFilteredAccountsCache?.();
+    mailboxWorkspace?.renderAccounts?.();
+  }
   applyBannedStateFromMessages();
 }
 
@@ -1669,7 +1716,9 @@ function renderMessages() {
     const typeLabel = selectedMailTypeLabel();
     els.deleteFilteredBtn.disabled = !total;
     const scopeLabel = syncScopeLabel(scope);
-    els.deleteFilteredBtn.textContent = total ? `删除${typeLabel || "邮件"} ${total} · ${scopeLabel}` : "批量删除";
+    const deleteScope = `${scopeLabel}，共 ${total} 封${typeLabel ? `${typeLabel}类型` : ""}邮件`;
+    els.deleteFilteredBtn.textContent = total ? `删除 ${total} 封` : "批量删除";
+    els.deleteFilteredBtn.title = total ? `删除范围：${deleteScope}` : "";
   }
 
   if (!pageItems.length) {
@@ -1688,6 +1737,7 @@ function renderMessages() {
         <span class="mail-item-top">
           <strong>${escapeHtml(message.subject || "(无主题)")}</strong>
           <span class="mail-item-actions">
+            <em class="mail-service-label">${escapeHtml(mailServiceLabel(message))}</em>
             <em>${escapeHtml(mailTypeLabel(message))}</em>
             <span class="mail-delete-one" title="删除这封邮件" aria-label="删除这封邮件">×</span>
           </span>
@@ -1923,7 +1973,7 @@ async function deleteMessage(message) {
     });
     const data = await readJsonResponse(response, "/client-api/messages/delete");
     if (!response.ok || data.success === false) throw new Error(data.error || "删除邮件失败");
-    state.ignoredMessageKeys.add(mailKey(message));
+    (Array.isArray(data.deleted_keys) ? data.deleted_keys : [mailKey(message)]).forEach((key) => state.ignoredMessageKeys.add(key));
     saveIgnoredMessages();
     if (state.activeMessageKey === mailKey(message)) state.activeMessageKey = "";
     await loadServerMessages({ silent: true });
@@ -1945,12 +1995,16 @@ async function deleteFilteredMessages() {
   const selectedAccounts = scope.kind === "selected" ? scope.targets : [];
   const scopeLabel = syncScopeLabel(scope);
   const typeLabel = selectedMailTypeLabel();
-  const typeScope = typeLabel ? `${typeLabel}类型的 ` : "";
-  const scopeText = `${scopeLabel}内 ${typeScope}${total} 封邮件`;
+  const typeScope = typeLabel ? `${typeLabel}类型` : "";
+  const scopeText = `${scopeLabel}中的 ${total} 封${typeScope}邮件`;
   if (!confirm(`确认删除${scopeText}？只删除本工具本地缓存，不会删除远端真实邮箱；后续刷新也不会再显示这些邮件。`)) return;
   const filter = Object.fromEntries(messageQueryParams().entries());
   if (selectedAccounts.length) {
     filter.accounts = selectedAccounts.map((account) => account.email).filter(Boolean);
+  }
+  if (els.deleteFilteredBtn) {
+    els.deleteFilteredBtn.disabled = true;
+    els.deleteFilteredBtn.textContent = "删除中";
   }
   try {
     const response = await fetch("/client-api/messages/delete", {
@@ -1960,6 +2014,8 @@ async function deleteFilteredMessages() {
     });
     const data = await readJsonResponse(response, "/client-api/messages/delete");
     if (!response.ok || data.success === false) throw new Error(data.error || "批量删除邮件失败");
+    (Array.isArray(data.deleted_keys) ? data.deleted_keys : []).forEach((key) => state.ignoredMessageKeys.add(key));
+    saveIgnoredMessages();
     state.activeMessageKey = "";
     state.page = 1;
     await loadServerMessages({ silent: true });
@@ -1969,6 +2025,8 @@ async function deleteFilteredMessages() {
   } catch (error) {
     addClientLog(`批量删除邮件失败：${error.message || "未知错误"}`, "error");
     toast(error.message || "批量删除失败");
+  } finally {
+    renderMessages();
   }
 }
 
@@ -3463,6 +3521,7 @@ els.nextPage.addEventListener("click", () => {
 });
 [
   els.mailboxCategoryFilter,
+  els.mailboxActivityFilter,
   els.mailboxSearch,
   els.mailboxPageSize,
 ].forEach((input) => {
@@ -3493,7 +3552,7 @@ const debouncedMessageSearch = scheduler?.debounce?.(() => {
   input.addEventListener("search", debouncedMessageSearch);
 });
 
-[els.sourceFilter, els.providerFilter, els.typeFilter, els.categoryFilter, els.pageSize].forEach((input) => {
+[els.sourceFilter, els.providerFilter, els.typeFilter, els.serviceFilter, els.categoryFilter, els.pageSize].forEach((input) => {
   if (!input) return;
   const reloadMessages = () => {
     state.page = 1;

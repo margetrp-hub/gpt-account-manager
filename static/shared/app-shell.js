@@ -5,12 +5,12 @@
     { key: "subscriptions", href: "/accounts.html", icon: "◎", label: "订阅管理" },
     { key: "warehouse", href: "/warehouse.html", icon: "→", label: "CPA 仓管" },
     { key: "dashboard", href: "/dashboard.html", icon: "▣", label: "仪表盘" },
+    { key: "converter", href: "/converter.html", icon: "⇄", label: "Session 转换" },
     { key: "plugins", href: "/plugins.html", icon: "◈", label: "插件中心" },
   ];
 
   const PLUGIN_MODULES = [
     { key: "refresh", href: "/refresh.html", icon: "↻", label: "凭证刷新" },
-    { key: "converter", href: "/converter.html", icon: "⇄", label: "Session 转换" },
     { key: "cdk", href: "/cdk.html", icon: "⌘", label: "CDK 取码" },
     { key: "api", href: "/api.html", icon: "⌗", label: "API 文档" },
     { key: "recover", href: "/recover.html", icon: "⌘", label: "工作区找回" },
