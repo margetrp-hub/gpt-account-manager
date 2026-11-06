@@ -257,6 +257,12 @@ sudo apt-get install -y python3-socks
 sudo npm install --omit=dev --cache /tmp/gpt-account-manager-npm-cache --no-audit --no-fund
 ```
 
+## 自动测试
+
+Pull Request 和 `main` 推送会运行 GitHub Actions CI：在 Python 3.10 / 3.12 上执行全部标准库回归测试，并运行前端 JavaScript 测试、语法检查、Compose 校验和 Docker 启动、错误凭证拒绝、重启恢复检查。测试使用本地 fixture 与临时容器，不需要真实邮箱、CPA 或 OAuth 密钥。
+
+现有 `v*` 标签发布必须先通过同一提交的 CI；失败时不会创建发布，修复后可重新运行。重新运行已完成的发布会保留已有 Release 和附件。CI 不会触发 VPS 部署。
+
 ## VPS 部署
 
 推荐 Python 服务只监听 `127.0.0.1:8765`，外部流量由 Nginx 或其它反向代理转发。
