@@ -17,7 +17,7 @@ docker run -d --name "$name" -p 127.0.0.1::8765 \
 port="$(docker inspect "$name" --format '{{(index (index .NetworkSettings.Ports "8765/tcp") 0).HostPort}}')"
 base="http://127.0.0.1:$port"
 wait_for_health() {
-  curl --fail --silent --show-error --retry 30 --retry-delay 1 --retry-connrefused \
+  curl --fail --silent --show-error --retry 30 --retry-delay 1 --retry-all-errors --retry-max-time 60 \
     --max-time 10 -H "Authorization: Bearer $token" "$base/health" |
     python3 -c 'import json,sys; p=json.load(sys.stdin); assert p["ok"] and p["app"] == "gpt-account-manager" and p["admin_token_set"]'
 }
