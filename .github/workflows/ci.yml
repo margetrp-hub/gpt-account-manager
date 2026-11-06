@@ -30,7 +30,7 @@ jobs:
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
-          ref: ${{ inputs.checkout_ref || github.ref }}
+          ref: ${{ inputs.checkout_ref || github.sha }}
       - uses: actions/setup-python@v6
         with:
           python-version: ${{ matrix.python }}
@@ -54,7 +54,7 @@ jobs:
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
-          ref: ${{ inputs.checkout_ref || github.ref }}
+          ref: ${{ inputs.checkout_ref || github.sha }}
       - name: Validate Compose with disposable CI configuration
         env:
           MAIL_PICKUP_ADMIN_TOKEN: ci-compose-validation-only

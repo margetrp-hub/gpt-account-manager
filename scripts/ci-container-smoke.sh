@@ -14,8 +14,12 @@ trap cleanup EXIT
 
 docker run -d --name "$name" -p 127.0.0.1::8765 \
   -e MAIL_PICKUP_ADMIN_TOKEN="$token" "$image" >/dev/null
-port="$(docker inspect "$name" --format '{{(index (index .NetworkSettings.Ports "8765/tcp") 0).HostPort}}')"
-base="http://127.0.0.1:$port"
+resolve_base() {
+  port="$(docker inspect "$name" --format '{{(index (index .NetworkSettings.Ports "8765/tcp") 0).HostPort}}')"
+  base="http://127.0.0.1:$port"
+  echo "Container endpoint: $base"
+}
+resolve_base
 wait_for_health() {
   curl --fail --silent --show-error --retry 30 --retry-delay 1 --retry-all-errors --retry-max-time 60 \
     --max-time 10 -H "Authorization: Bearer $token" "$base/health" |
@@ -29,5 +33,6 @@ status="$(curl --silent --output /dev/null --write-out '%{http_code}' \
 curl --fail --silent --show-error -H "Authorization: Bearer $token" \
   "$base/admin-api/workspaces/recover" >/dev/null
 docker restart "$name" >/dev/null
+resolve_base
 wait_for_health
 echo 'Container startup, authentication rejection and restart checks passed.'
